@@ -1,0 +1,1036 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>水果节奏消消乐 Boss 战</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --orange: #ff6b4a;
+      --paper: #fff7ea;
+      --ink: #181411;
+      --gold: #ffd166;
+      --green: #53b97f;
+      --blue: #3aa7b7;
+      --pink: #ff9bb0;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: #090807;
+      font-family: ui-rounded, "SF Pro Rounded", "PingFang SC", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+    canvas {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+      touch-action: none;
+      cursor: crosshair;
+    }
+    canvas.grabbing { cursor: grabbing; }
+    video { display: none; }
+    .start {
+      position: fixed;
+      inset: 0;
+      z-index: 30;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      background:
+        radial-gradient(circle at 18% 20%, rgba(255,107,74,.25), transparent 32%),
+        radial-gradient(circle at 80% 72%, rgba(58,167,183,.2), transparent 34%),
+        rgba(8,7,6,.76);
+      backdrop-filter: blur(18px);
+    }
+    .panel {
+      width: min(560px, 100%);
+      padding: 24px;
+      border-radius: 8px;
+      background: rgba(255,247,234,.94);
+      color: var(--ink);
+      box-shadow: 0 28px 88px rgba(0,0,0,.34);
+      border: 1px solid rgba(255,255,255,.2);
+    }
+    h1 {
+      margin: 0 0 10px;
+      font-size: clamp(32px, 7vw, 56px);
+      line-height: .96;
+      letter-spacing: 0;
+    }
+    p {
+      margin: 0 0 18px;
+      color: rgba(24,20,17,.7);
+      font-size: 15px;
+      line-height: 1.65;
+    }
+    button {
+      appearance: none;
+      border: 0;
+      font: inherit;
+      user-select: none;
+    }
+    #startBtn {
+      width: 100%;
+      height: 52px;
+      border-radius: 8px;
+      background: var(--orange);
+      color: #fff;
+      font-size: 17px;
+      font-weight: 900;
+      box-shadow: 0 12px 24px rgba(255,107,74,.34);
+    }
+    .small {
+      margin-top: 12px;
+      color: rgba(24,20,17,.52);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+    .topbar {
+      position: fixed;
+      left: 14px;
+      right: 14px;
+      top: 14px;
+      z-index: 20;
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      pointer-events: none;
+    }
+    .pill, .icon {
+      height: 38px;
+      border-radius: 8px;
+      border: 1px solid rgba(255,255,255,.18);
+      background: rgba(14,12,10,.58);
+      color: rgba(255,255,255,.84);
+      backdrop-filter: blur(14px);
+      box-shadow: 0 8px 24px rgba(0,0,0,.16);
+      pointer-events: auto;
+    }
+    .pill {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 0 13px;
+      font-size: 13px;
+      font-weight: 850;
+      white-space: nowrap;
+    }
+    .score { color: #fff; font-variant-numeric: tabular-nums; }
+    .tools { display: flex; gap: 8px; pointer-events: auto; }
+    .icon {
+      width: 38px;
+      display: grid;
+      place-items: center;
+      font-size: 16px;
+    }
+    .status {
+      position: fixed;
+      z-index: 20;
+      left: 14px;
+      bottom: 14px;
+      max-width: min(660px, calc(100vw - 28px));
+      border-radius: 8px;
+      padding: 10px 12px;
+      border: 1px solid rgba(255,255,255,.16);
+      background: rgba(14,12,10,.56);
+      color: rgba(255,255,255,.82);
+      backdrop-filter: blur(14px);
+      font-size: 12px;
+      line-height: 1.48;
+      pointer-events: none;
+    }
+    .status strong { color: white; }
+    @media (max-width: 760px) {
+      .topbar { flex-direction: column; }
+      .pill { max-width: calc(100vw - 28px); overflow-x: auto; }
+      .tools { align-self: flex-end; }
+      .status { font-size: 11px; }
+    }
+  </style>
+</head>
+<body>
+  <canvas id="stage"></canvas>
+  <video id="camera" playsinline muted></video>
+
+  <div class="start" id="startPanel">
+    <section class="panel">
+      <h1>水果节奏 Boss 战</h1>
+      <p>连同类水果消除，连 5 个生成炸弹，连 6 个生成彩虹。消除会自动写进音乐轨道；60 秒内打掉 Boss 血条。张开手掌横扫清一行，双手拉开/合拢会改变棋盘和音色。</p>
+      <button id="startBtn">启动摄像头和手势</button>
+      <div class="small">鼠标和触摸也能玩：按住连线，松开消除。摄像头权限需要你在浏览器里点允许。</div>
+    </section>
+  </div>
+
+  <div class="topbar">
+    <div class="pill">
+      <span>⏱ <span class="score" id="time">60</span>s</span>
+      <span>分数 <span class="score" id="score">0</span></span>
+      <span>连击 <span class="score" id="combo">0</span></span>
+      <span>Boss <span class="score" id="boss">100%</span></span>
+      <span>速度 <span class="score" id="tempo">120</span></span>
+    </div>
+    <div class="tools">
+      <button class="icon" id="soundBtn" title="开启声音">🔇</button>
+      <button class="icon" id="playBtn" title="播放/暂停节拍">▶</button>
+      <button class="icon" id="shuffleBtn" title="重新开始">↻</button>
+      <button class="icon" id="flipBtn" title="翻转摄像头">⇄</button>
+    </div>
+  </div>
+
+  <div class="status" id="status"><strong>准备中</strong>。手指经过水果会预听，捏住连线，3 个以上松手消除。</div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+  <script>
+    const canvas = document.getElementById("stage")
+    const ctx = canvas.getContext("2d")
+    const video = document.getElementById("camera")
+    const startPanel = document.getElementById("startPanel")
+    const statusEl = document.getElementById("status")
+    const scoreEl = document.getElementById("score")
+    const comboEl = document.getElementById("combo")
+    const timeEl = document.getElementById("time")
+    const bossEl = document.getElementById("boss")
+    const tempoEl = document.getElementById("tempo")
+    const soundBtn = document.getElementById("soundBtn")
+    const playBtn = document.getElementById("playBtn")
+    const DPR = Math.min(window.devicePixelRatio || 1, 1.25)
+
+    let W = 1, H = 1
+    let cameraOk = false
+    let mirror = true
+    let booting = false
+    let audioCtx = null
+    let masterGain = null
+    let filter = null
+    let soundUnlocked = false
+    let handPointers = []
+    let mousePointer = null
+    let pointerId = null
+    let pointer = null
+    let board = []
+    let cells = []
+    let selected = []
+    let selecting = false
+    let activeType = null
+    let score = 0
+    let combo = 0
+    let bossHp = 100
+    let timeLeft = 60
+    let gameStarted = false
+    let gameOver = false
+    let lastTimerAt = 0
+    let boardScale = 1
+    let targetBoardScale = 1
+    let tension = .45
+    let tempo = 120
+    let playing = true
+    let step = -1
+    let lastStepAt = 0
+    let tracks = [[], [], []]
+    let particles = []
+    let pulses = []
+    let floatTexts = []
+    let lastTime = performance.now()
+    let lastPreviewTile = null
+    let lastPreviewAt = 0
+    let lastPalmSweepAt = 0
+    let lastTwoHandDistance = null
+    let lastLayoutScale = 1
+
+    const COLS = 7
+    const ROWS = 7
+    const STEPS = 8
+    const fruits = [
+      { id: "banana", emoji: "🍌", color: "#ffd166", freq: 196 },
+      { id: "apple", emoji: "🍎", color: "#ff6b4a", freq: 262 },
+      { id: "grape", emoji: "🍇", color: "#a78bfa", freq: 330 },
+      { id: "berry", emoji: "🫐", color: "#7286ff", freq: 392 },
+      { id: "lemon", emoji: "🍋", color: "#f7e66f", freq: 523 },
+      { id: "kiwi", emoji: "🥝", color: "#53b97f", freq: 440 },
+    ]
+
+    function resize() {
+      W = window.innerWidth
+      H = window.innerHeight
+      canvas.width = Math.floor(W * DPR)
+      canvas.height = Math.floor(H * DPR)
+      canvas.style.width = W + "px"
+      canvas.style.height = H + "px"
+      ctx.setTransform(DPR, 0, 0, DPR, 0, 0)
+      buildCells()
+      if (!board.length) resetGame()
+      layoutTiles(true)
+    }
+
+    function boardRect() {
+      const base = Math.min(W * .64, H * .64, 540) * boardScale
+      return {
+        x: (W - base) / 2,
+        y: Math.max(90, (H - base) / 2 - 8),
+        size: base,
+        cell: base / COLS,
+      }
+    }
+
+    function trackRect() {
+      const r = boardRect()
+      const width = Math.min(r.size, W - 28)
+      return {
+        x: (W - width) / 2,
+        y: Math.min(H - 154, r.y + r.size + 24),
+        w: width,
+        h: 104,
+      }
+    }
+
+    function buildCells() {
+      const r = boardRect()
+      cells = []
+      for (let row = 0; row < ROWS; row++) {
+        for (let col = 0; col < COLS; col++) {
+          cells.push({ row, col, x: r.x + col * r.cell, y: r.y + row * r.cell, size: r.cell })
+        }
+      }
+    }
+
+    function cellAt(row, col) { return cells[row * COLS + col] }
+    function baseFruit() { return fruits[Math.floor(Math.random() * fruits.length)] }
+
+    function makeTile(row, col, above = false, special = null, sourceFruit = null) {
+      const fruit = sourceFruit || baseFruit()
+      const cell = cellAt(row, col)
+      return {
+        id: `${Date.now()}-${Math.random()}`,
+        row, col,
+        type: special || fruit.id,
+        baseType: fruit.id,
+        emoji: special === "bomb" ? "💣" : special === "rainbow" ? "🌈" : fruit.emoji,
+        color: special === "bomb" ? "#ff6b4a" : special === "rainbow" ? "#ffffff" : fruit.color,
+        freq: special === "bomb" ? 92 : special === "rainbow" ? 660 : fruit.freq,
+        special,
+        x: cell.x + cell.size / 2,
+        y: above ? cell.y - cell.size * (1 + Math.random() * 2) : cell.y + cell.size / 2,
+        tx: cell.x + cell.size / 2,
+        ty: cell.y + cell.size / 2,
+        scale: 1,
+      }
+    }
+
+    function resetGame() {
+      score = 0
+      combo = 0
+      bossHp = 100
+      timeLeft = 60
+      gameStarted = false
+      gameOver = false
+      selected = []
+      selecting = false
+      activeType = null
+      tracks = [[], [], []]
+      board = []
+      for (let row = 0; row < ROWS; row++) {
+        board[row] = []
+        for (let col = 0; col < COLS; col++) board[row][col] = makeTile(row, col)
+      }
+      updateHud()
+      layoutTiles(true)
+      statusEl.innerHTML = "<strong>新局开始</strong>。连 5 个出炸弹，连 6 个出彩虹。"
+    }
+
+    function updateHud() {
+      scoreEl.textContent = score
+      comboEl.textContent = combo
+      timeEl.textContent = Math.max(0, timeLeft)
+      bossEl.textContent = `${Math.max(0, Math.round(bossHp))}%`
+      tempoEl.textContent = Math.round(tempo)
+    }
+
+    function layoutTiles(instant = false) {
+      buildCells()
+      for (let row = 0; row < ROWS; row++) {
+        for (let col = 0; col < COLS; col++) {
+          const tile = board[row]?.[col]
+          if (!tile) continue
+          const cell = cellAt(row, col)
+          tile.row = row
+          tile.col = col
+          tile.tx = cell.x + cell.size / 2
+          tile.ty = cell.y + cell.size / 2
+          if (instant) {
+            tile.x = tile.tx
+            tile.y = tile.ty
+          }
+        }
+      }
+    }
+
+    function tileAt(x, y) {
+      const r = boardRect()
+      const col = Math.floor((x - r.x) / r.cell)
+      const row = Math.floor((y - r.y) / r.cell)
+      if (row < 0 || row >= ROWS || col < 0 || col >= COLS) return null
+      return board[row][col]
+    }
+
+    function selectedHas(tile) { return selected.indexOf(tile) !== -1 }
+    function neighbors(a, b) {
+      if (!a || !b) return false
+      const dr = Math.abs(a.row - b.row)
+      const dc = Math.abs(a.col - b.col)
+      return dr <= 1 && dc <= 1 && dr + dc > 0
+    }
+    function canConnect(tile) {
+      if (!tile) return false
+      if (!activeType) return true
+      return tile.type === activeType || tile.special === "rainbow" || activeType === "rainbow"
+    }
+
+    function beginSelection(tile) {
+      if (!tile || gameOver) return
+      if (!gameStarted) startTimer()
+      selecting = true
+      activeType = tile.special === "rainbow" ? "rainbow" : tile.type
+      selected = [tile]
+      playTone(tile.freq, .06, "preview")
+      addPulse(tile.x, tile.y, tile.color)
+      addSpark(tile.x, tile.y, tile.color, 8)
+    }
+
+    function extendSelection(tile) {
+      if (!selecting || !tile || !canConnect(tile)) return
+      const last = selected[selected.length - 1]
+      if (tile === last) return
+      const prevIndex = selected.length >= 2 ? selected.length - 2 : -1
+      if (prevIndex >= 0 && selected[prevIndex] === tile) {
+        selected.pop()
+        playTone(tile.freq * .8, .04, "preview")
+        return
+      }
+      if (!selectedHas(tile) && neighbors(last, tile)) {
+        selected.push(tile)
+        if (activeType === "rainbow" && tile.special !== "rainbow") activeType = tile.type
+        playTone(tile.freq, .052, "preview")
+        addSpark(tile.x, tile.y, tile.color, 6)
+      }
+    }
+
+    function endSelection() {
+      if (!selecting) return
+      selecting = false
+      if (selected.length >= 3) removeSelected()
+      else if (selected.length === 1 && selected[0].special === "bomb") triggerBomb(selected[0])
+      else {
+        if (selected.length) {
+          const t = selected[selected.length - 1]
+          floatTexts.push({ text: "连 3 个", x: t.x, y: t.y - 12, vy: -1.2, life: 1, color: "rgba(255,255,255,.86)" })
+        }
+      }
+      selected = []
+      activeType = null
+    }
+
+    function removeSelected() {
+      const count = selected.length
+      const center = selected[Math.floor(count / 2)]
+      let spawnSpecial = null
+      if (count >= 6) spawnSpecial = "rainbow"
+      else if (count >= 5) spawnSpecial = "bomb"
+      const spawnRow = center.row
+      const spawnCol = center.col
+      const sourceFruit = fruits.find(f => f.id === center.baseType) || baseFruit()
+
+      selected.forEach((tile, i) => {
+        board[tile.row][tile.col] = null
+        addSpark(tile.x, tile.y, tile.color, 12)
+        addPulse(tile.x, tile.y, tile.color)
+        playTone(tile.freq * (1 + i * .035), .08, "hit")
+        writeMelody(tile, i)
+        if (tile.special === "bomb") explodeArea(tile.row, tile.col, false)
+      })
+
+      if (spawnSpecial) {
+        board[spawnRow][spawnCol] = makeTile(spawnRow, spawnCol, false, spawnSpecial, sourceFruit)
+        const msg = spawnSpecial === "bomb" ? "生成炸弹" : "生成彩虹"
+        floatTexts.push({ text: msg, x: center.x, y: center.y - 20, vy: -1.6, life: 1.2, color: spawnSpecial === "bomb" ? "#ff6b4a" : "#fff" })
+      }
+
+      combo += 1
+      const gain = count * count * 10 + combo * 25
+      score += gain
+      bossHp -= count * 2.4 + combo * .9
+      floatTexts.push({ text: `+${gain}`, x: center.x, y: center.y, vy: -1.8, life: 1.15, color: center.color })
+      if (bossHp <= 0) winGame()
+      collapseAndRefill()
+      updateHud()
+    }
+
+    function triggerBomb(tile) {
+      explodeArea(tile.row, tile.col, true)
+      board[tile.row][tile.col] = null
+      score += 220
+      bossHp -= 8
+      collapseAndRefill()
+      updateHud()
+      if (bossHp <= 0) winGame()
+    }
+
+    function explodeArea(row, col, scoreIt = true) {
+      for (let r = row - 1; r <= row + 1; r++) {
+        for (let c = col - 1; c <= col + 1; c++) {
+          if (r < 0 || r >= ROWS || c < 0 || c >= COLS) continue
+          const tile = board[r][c]
+          if (!tile) continue
+          addSpark(tile.x, tile.y, tile.color, 10)
+          addPulse(tile.x, tile.y, "#ff6b4a")
+          playTone(tile.freq * .55, .06, "hit")
+          board[r][c] = null
+          if (scoreIt) {
+            score += 35
+            bossHp -= .8
+          }
+        }
+      }
+    }
+
+    function clearRow(row) {
+      if (gameOver || row < 0 || row >= ROWS) return
+      for (let col = 0; col < COLS; col++) {
+        const tile = board[row][col]
+        if (!tile) continue
+        addSpark(tile.x, tile.y, tile.color, 10)
+        board[row][col] = null
+      }
+      score += 300
+      combo += 1
+      bossHp -= 9
+      collapseAndRefill()
+      updateHud()
+      statusEl.innerHTML = "<strong>手掌技能</strong> 清掉一整行。"
+    }
+
+    function squeezePop() {
+      if (gameOver) return
+      const middle = Math.floor(ROWS / 2)
+      for (let row = middle - 1; row <= middle + 1; row++) clearRow(row)
+      floatTexts.push({ text: "双手挤爆", x: W / 2, y: H * .22, vy: -1.4, life: 1.3, color: "#ffd166" })
+    }
+
+    function collapseAndRefill() {
+      for (let col = 0; col < COLS; col++) {
+        const stack = []
+        for (let row = ROWS - 1; row >= 0; row--) if (board[row][col]) stack.push(board[row][col])
+        for (let row = ROWS - 1; row >= 0; row--) {
+          const tile = stack[ROWS - 1 - row]
+          if (tile) {
+            board[row][col] = tile
+            tile.row = row
+            tile.col = col
+          } else board[row][col] = makeTile(row, col, true)
+        }
+      }
+      layoutTiles(false)
+    }
+
+    function writeMelody(tile, i) {
+      const trackIndex = tile.special === "bomb" ? 0 : tile.freq < 260 ? 1 : 2
+      const stepIndex = (step + i + 1 + STEPS) % STEPS
+      tracks[trackIndex][stepIndex] = { freq: tile.freq, color: tile.color, emoji: tile.emoji, life: 1 }
+    }
+
+    function startTimer() {
+      gameStarted = true
+      lastTimerAt = performance.now()
+      statusEl.innerHTML = "<strong>60 秒开始</strong>。消除会自动写进下面的音乐轨道。"
+    }
+
+    function winGame() {
+      gameOver = true
+      bossHp = 0
+      addSpark(W / 2, H * .26, "#ffd166", 80)
+      floatTexts.push({ text: "BOSS DOWN", x: W / 2, y: H * .28, vy: -1, life: 2, color: "#ffd166" })
+      statusEl.innerHTML = "<strong>Boss 被打掉了</strong>。按 ↻ 再来一局。"
+    }
+
+    function loseGame() {
+      gameOver = true
+      floatTexts.push({ text: "TIME UP", x: W / 2, y: H * .28, vy: -1, life: 2, color: "#ff9bb0" })
+      statusEl.innerHTML = "<strong>时间到</strong>。按 ↻ 重新开始。"
+    }
+
+    function updateTimer(now) {
+      if (!gameStarted || gameOver) return
+      if (now - lastTimerAt >= 1000) {
+        const n = Math.floor((now - lastTimerAt) / 1000)
+        timeLeft -= n
+        lastTimerAt += n * 1000
+        if (timeLeft <= 0 && bossHp > 0) loseGame()
+        updateHud()
+      }
+    }
+
+    function ensureAudio() {
+      if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)()
+        masterGain = audioCtx.createGain()
+        filter = audioCtx.createBiquadFilter()
+        filter.type = "lowpass"
+        filter.frequency.value = 900 + tension * 2400
+        masterGain.gain.value = .42
+        filter.connect(masterGain)
+        masterGain.connect(audioCtx.destination)
+      }
+      if (audioCtx.state === "suspended") audioCtx.resume()
+      soundUnlocked = true
+      soundBtn.textContent = "🔊"
+    }
+
+    function unlockSound() {
+      ensureAudio()
+      playTone(440, .08, "preview")
+      setTimeout(() => playTone(660, .08, "preview"), 90)
+      statusEl.innerHTML = "<strong>声音已开启</strong>。手指经过水果会预听，消除会写进节奏轨。"
+    }
+
+    function playTone(freq, dur = .08, type = "hit") {
+      if (!audioCtx || !filter || !soundUnlocked) return
+      const now = audioCtx.currentTime
+      const osc = audioCtx.createOscillator()
+      const gain = audioCtx.createGain()
+      osc.type = type === "bass" ? "triangle" : type === "preview" ? "sine" : "square"
+      osc.frequency.setValueAtTime(freq, now)
+      if (type !== "bass") osc.frequency.exponentialRampToValueAtTime(freq * 1.25, now + dur)
+      gain.gain.setValueAtTime(.0001, now)
+      gain.gain.exponentialRampToValueAtTime(type === "preview" ? .08 : .18, now + .012)
+      gain.gain.exponentialRampToValueAtTime(.0001, now + dur)
+      osc.connect(gain)
+      gain.connect(filter)
+      osc.start(now)
+      osc.stop(now + dur + .02)
+    }
+
+    function updateSequencer(now) {
+      if (!playing || !audioCtx) return
+      const interval = 60000 / tempo / 2
+      if (now - lastStepAt < interval) return
+      lastStepAt = now
+      step = (step + 1) % STEPS
+      tracks.forEach((track, trackIndex) => {
+        const note = track[step]
+        if (!note) return
+        playTone(trackIndex === 0 ? note.freq * .5 : note.freq, .1, trackIndex === 0 ? "bass" : "hit")
+        addPulse(trackRect().x + (step + .5) * trackRect().w / STEPS, trackRect().y + 18 + trackIndex * 28, note.color)
+      })
+    }
+
+    function addSpark(x, y, color, count = 8) {
+      if (particles.length > 180) particles.splice(0, particles.length - 160)
+      for (let i = 0; i < count; i++) {
+        const a = Math.random() * Math.PI * 2
+        const sp = 1 + Math.random() * 5
+        particles.push({ x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, size: 2 + Math.random() * 5, life: .7 + Math.random() * .45, color })
+      }
+    }
+    function addPulse(x, y, color) { pulses.push({ x, y, r: 8, life: 1, color }) }
+
+    function drawCamera() {
+      ctx.save()
+      if (cameraOk && video.readyState >= 2) {
+        const vr = video.videoWidth / video.videoHeight || 16 / 9
+        const cr = W / H
+        let dw = W, dh = H, dx = 0, dy = 0
+        if (vr > cr) { dh = H; dw = H * vr; dx = (W - dw) / 2 }
+        else { dw = W; dh = W / vr; dy = (H - dh) / 2 }
+        ctx.globalAlpha = .76
+        if (mirror) { ctx.translate(W, 0); ctx.scale(-1, 1); ctx.drawImage(video, W - dx - dw, dy, dw, dh) }
+        else ctx.drawImage(video, dx, dy, dw, dh)
+        ctx.globalAlpha = 1
+        ctx.fillStyle = "rgba(6,5,4,.38)"
+        ctx.fillRect(0, 0, W, H)
+      } else {
+        const g = ctx.createLinearGradient(0, 0, W, H)
+        g.addColorStop(0, "#211512")
+        g.addColorStop(.52, "#0d2022")
+        g.addColorStop(1, "#090807")
+        ctx.fillStyle = g
+        ctx.fillRect(0, 0, W, H)
+      }
+      ctx.restore()
+    }
+
+    function roundRect(x, y, w, h, r) {
+      ctx.beginPath()
+      ctx.moveTo(x + r, y)
+      ctx.arcTo(x + w, y, x + w, y + h, r)
+      ctx.arcTo(x + w, y + h, x, y + h, r)
+      ctx.arcTo(x, y + h, x, y, r)
+      ctx.arcTo(x, y, x + w, y, r)
+      ctx.closePath()
+    }
+
+    function drawBoss() {
+      const r = boardRect()
+      const x = r.x
+      const y = Math.max(58, r.y - 58)
+      const w = r.size
+      roundRect(x, y, w, 22, 11)
+      ctx.fillStyle = "rgba(255,255,255,.12)"
+      ctx.fill()
+      roundRect(x, y, w * Math.max(0, bossHp) / 100, 22, 11)
+      const g = ctx.createLinearGradient(x, y, x + w, y)
+      g.addColorStop(0, "#53b97f")
+      g.addColorStop(.6, "#ffd166")
+      g.addColorStop(1, "#ff6b4a")
+      ctx.fillStyle = g
+      ctx.fill()
+      ctx.font = "900 13px ui-rounded, system-ui"
+      ctx.fillStyle = "#fff"
+      ctx.textAlign = "center"
+      ctx.fillText("水果 Boss", x + w / 2, y + 16)
+    }
+
+    function drawBoard() {
+      const r = boardRect()
+      ctx.save()
+      ctx.shadowColor = "rgba(0,0,0,.36)"
+      ctx.shadowBlur = 28
+      ctx.shadowOffsetY = 16
+      roundRect(r.x - 10, r.y - 10, r.size + 20, r.size + 20, 20)
+      ctx.fillStyle = "rgba(255,247,234,.11)"
+      ctx.fill()
+      ctx.restore()
+      for (const cell of cells) {
+        roundRect(cell.x + 4, cell.y + 4, cell.size - 8, cell.size - 8, 14)
+        ctx.fillStyle = "rgba(255,255,255,.075)"
+        ctx.fill()
+        ctx.strokeStyle = "rgba(255,255,255,.12)"
+        ctx.lineWidth = 1
+        ctx.stroke()
+      }
+    }
+
+    function drawTile(tile) {
+      const isSelected = selectedHas(tile)
+      const targetScale = isSelected ? 1.17 : 1
+      tile.scale += (targetScale - tile.scale) * .18
+      const cell = cellAt(tile.row, tile.col)
+      const radius = Math.min(cell.size * .34, 40) * tile.scale
+      ctx.save()
+      ctx.translate(tile.x, tile.y)
+      ctx.scale(tile.scale, tile.scale)
+      ctx.shadowColor = tile.special === "rainbow" ? "#fff" : tile.color
+      ctx.shadowBlur = isSelected || tile.special ? 28 : 12
+      ctx.fillStyle = isSelected ? "rgba(255,255,255,.22)" : "rgba(255,255,255,.12)"
+      ctx.beginPath()
+      ctx.arc(0, 0, radius + 10, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.fillStyle = tile.color
+      ctx.globalAlpha = tile.special === "rainbow" ? .3 : .18
+      ctx.beginPath()
+      ctx.arc(0, 0, radius + 3, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.globalAlpha = 1
+      ctx.font = `${radius * 1.35}px "Apple Color Emoji", "Segoe UI Emoji", sans-serif`
+      ctx.textAlign = "center"
+      ctx.textBaseline = "middle"
+      ctx.fillText(tile.emoji, 0, 2)
+      ctx.restore()
+    }
+
+    function drawSelectionLine() {
+      if (!selected.length) return
+      ctx.save()
+      ctx.lineCap = "round"
+      ctx.lineJoin = "round"
+      ctx.lineWidth = 10
+      ctx.strokeStyle = selected.length >= 3 ? "rgba(255,209,102,.88)" : "rgba(255,255,255,.46)"
+      ctx.shadowColor = selected.length >= 3 ? "#ffd166" : "#fff"
+      ctx.shadowBlur = 18
+      ctx.beginPath()
+      selected.forEach((tile, i) => i === 0 ? ctx.moveTo(tile.x, tile.y) : ctx.lineTo(tile.x, tile.y))
+      if (selecting && pointer) ctx.lineTo(pointer.x, pointer.y)
+      ctx.stroke()
+      ctx.restore()
+    }
+
+    function drawTracks() {
+      const tr = trackRect()
+      ctx.save()
+      roundRect(tr.x, tr.y, tr.w, tr.h, 16)
+      ctx.fillStyle = "rgba(255,255,255,.08)"
+      ctx.fill()
+      ctx.strokeStyle = "rgba(255,255,255,.16)"
+      ctx.stroke()
+      const labels = ["鼓/炸弹", "贝斯", "旋律"]
+      for (let row = 0; row < 3; row++) {
+        ctx.font = "800 11px ui-rounded, system-ui"
+        ctx.fillStyle = "rgba(255,255,255,.55)"
+        ctx.fillText(labels[row], tr.x + 12, tr.y + 24 + row * 28)
+        for (let s = 0; s < STEPS; s++) {
+          const x = tr.x + 78 + s * ((tr.w - 90) / STEPS)
+          const y = tr.y + 12 + row * 28
+          const active = step === s && playing
+          roundRect(x, y, 24, 18, 6)
+          ctx.fillStyle = active ? "rgba(255,209,102,.28)" : "rgba(255,255,255,.08)"
+          ctx.fill()
+          const note = tracks[row][s]
+          if (note) {
+            ctx.fillStyle = note.color
+            ctx.shadowColor = note.color
+            ctx.shadowBlur = active ? 16 : 6
+            ctx.font = "14px Apple Color Emoji, Segoe UI Emoji"
+            ctx.fillText(note.emoji, x + 4, y + 14)
+            ctx.shadowBlur = 0
+          }
+        }
+      }
+      ctx.restore()
+    }
+
+    function drawEffects(dt) {
+      ctx.save()
+      for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i]
+        p.life -= dt * .0014
+        p.x += p.vx
+        p.y += p.vy
+        p.vy += .04
+        if (p.life <= 0) { particles.splice(i, 1); continue }
+        ctx.globalAlpha = Math.max(0, p.life)
+        ctx.fillStyle = p.color
+        ctx.shadowColor = p.color
+        ctx.shadowBlur = 14
+        ctx.beginPath()
+        ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2)
+        ctx.fill()
+      }
+      for (let i = pulses.length - 1; i >= 0; i--) {
+        const p = pulses[i]
+        p.life -= dt * .0012
+        p.r += dt * .08
+        if (p.life <= 0) { pulses.splice(i, 1); continue }
+        ctx.globalAlpha = Math.max(0, p.life)
+        ctx.strokeStyle = p.color
+        ctx.lineWidth = 3
+        ctx.shadowColor = p.color
+        ctx.shadowBlur = 18
+        ctx.beginPath()
+        ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2)
+        ctx.stroke()
+      }
+      for (let i = floatTexts.length - 1; i >= 0; i--) {
+        const f = floatTexts[i]
+        f.life -= dt * .001
+        f.y += f.vy
+        if (f.life <= 0) { floatTexts.splice(i, 1); continue }
+        ctx.globalAlpha = Math.max(0, f.life)
+        ctx.fillStyle = f.color
+        ctx.shadowColor = f.color
+        ctx.shadowBlur = 14
+        ctx.font = "900 28px ui-rounded, system-ui"
+        ctx.textAlign = "center"
+        ctx.fillText(f.text, f.x, f.y)
+      }
+      ctx.restore()
+    }
+
+    function drawPointer() {
+      if (!pointer) return
+      ctx.save()
+      ctx.strokeStyle = pointer.pinching ? "#ffd166" : "rgba(255,255,255,.78)"
+      ctx.lineWidth = 2
+      ctx.shadowColor = pointer.pinching ? "#ffd166" : "#fff"
+      ctx.shadowBlur = pointer.pinching ? 20 : 8
+      ctx.beginPath()
+      ctx.arc(pointer.x, pointer.y, pointer.pinching ? 22 : 12, 0, Math.PI * 2)
+      ctx.stroke()
+      ctx.fillStyle = pointer.pinching ? "#ffd166" : "rgba(255,255,255,.86)"
+      ctx.beginPath()
+      ctx.arc(pointer.x, pointer.y, 3, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.restore()
+    }
+
+    function updatePointer(now) {
+      pointer = mousePointer || handPointers[0] || null
+      if (pointer) {
+        const tile = tileAt(pointer.x, pointer.y)
+        if (tile && tile !== lastPreviewTile && now - lastPreviewAt > 120 && !selecting) {
+          playTone(tile.freq, .045, "preview")
+          lastPreviewTile = tile
+          lastPreviewAt = now
+        }
+        if (pointer.pinching || mousePointer) {
+          if (!selecting && tile) beginSelection(tile)
+          else if (selecting && tile) extendSelection(tile)
+        } else endSelection()
+      } else endSelection()
+    }
+
+    function updateHands(now) {
+      targetBoardScale = 1
+      if (handPointers.length >= 2) {
+        const a = handPointers[0], b = handPointers[1]
+        const d = Math.hypot(a.x - b.x, a.y - b.y)
+        targetBoardScale = Math.max(.82, Math.min(1.2, d / (Math.min(W, H) * .55)))
+        tempo = Math.max(80, Math.min(170, 80 + (a.x + b.x) / W * 60))
+        tension = Math.max(.05, Math.min(1, Math.abs(a.x - b.x) / W))
+        if (lastTwoHandDistance && lastTwoHandDistance - d > 120 && now - lastPalmSweepAt > 1200) {
+          squeezePop()
+          lastPalmSweepAt = now
+        }
+        lastTwoHandDistance = d
+      } else if (handPointers[0]) {
+        const h = handPointers[0]
+        tempo = Math.max(80, Math.min(170, 170 - h.y / H * 90))
+        tension = Math.max(.05, Math.min(1, h.x / W))
+        if (h.open && Math.abs(h.vx) > 18 && now - lastPalmSweepAt > 900) {
+          const tile = tileAt(h.x, h.y)
+          const row = tile ? tile.row : Math.floor((h.y - boardRect().y) / boardRect().cell)
+          clearRow(row)
+          lastPalmSweepAt = now
+        }
+        lastTwoHandDistance = null
+      } else lastTwoHandDistance = null
+      boardScale += (targetBoardScale - boardScale) * .08
+      if (filter) filter.frequency.setTargetAtTime(600 + tension * 3600, audioCtx.currentTime, .03)
+      if (masterGain) masterGain.gain.setTargetAtTime(.22 + (1 - Math.min(1, (handPointers[0]?.y || H * .6) / H)) * .35, audioCtx.currentTime, .03)
+      updateHud()
+    }
+
+    function loop(now) {
+      const dt = Math.min(34, now - lastTime)
+      lastTime = now
+      updateHands(now)
+      if (Math.abs(boardScale - lastLayoutScale) > .003) {
+        layoutTiles(false)
+        lastLayoutScale = boardScale
+      }
+      for (let row = 0; row < ROWS; row++) {
+        for (let col = 0; col < COLS; col++) {
+          const tile = board[row]?.[col]
+          if (!tile) continue
+          tile.x += (tile.tx - tile.x) * .18
+          tile.y += (tile.ty - tile.y) * .18
+        }
+      }
+      updatePointer(now)
+      updateTimer(now)
+      updateSequencer(now)
+      drawCamera()
+      drawBoss()
+      drawBoard()
+      drawSelectionLine()
+      for (let row = 0; row < ROWS; row++) for (let col = 0; col < COLS; col++) if (board[row]?.[col]) drawTile(board[row][col])
+      drawTracks()
+      drawEffects(dt)
+      drawPointer()
+      requestAnimationFrame(loop)
+    }
+
+    async function startCamera() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false })
+        video.srcObject = stream
+        await video.play()
+        cameraOk = true
+        statusEl.innerHTML = "<strong>摄像头已启动</strong>。先点右上角 🔇 开声音；捏合连线，双手距离会改变棋盘和音色。"
+      } catch (err) {
+        cameraOk = false
+        statusEl.innerHTML = "<strong>摄像头未开启</strong>。鼠标/触摸依然能完整体验。"
+      }
+    }
+
+    async function startHands() {
+      if (!window.Hands || !cameraOk) return
+      try {
+        const hands = new Hands({ locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` })
+        hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: .68, minTrackingConfidence: .68 })
+        const previous = new Map()
+        hands.onResults(results => {
+          const next = []
+          const all = results.multiHandLandmarks || []
+          all.forEach((hand, idx) => {
+            const thumb = hand[4], index = hand[8], middle = hand[12], ring = hand[16], pinky = hand[20], wrist = hand[0]
+            const dist = Math.hypot(thumb.x - index.x, thumb.y - index.y)
+            const old = previous.get(idx)
+            const pinching = old?.pinching ? dist < .088 : dist < .058
+            const x = (mirror ? 1 - index.x : index.x) * W
+            const y = index.y * H
+            const openScore = [index, middle, ring, pinky].reduce((sum, tip) => sum + Math.hypot(tip.x - wrist.x, tip.y - wrist.y), 0)
+            const prev = old || { x, y }
+            next.push({ x, y, vx: x - prev.x, vy: y - prev.y, pinching, open: openScore > .92 })
+          })
+          previous.clear()
+          next.forEach((h, i) => previous.set(i, h))
+          handPointers = next
+        })
+        async function detect() {
+          if (video.readyState >= 2) await hands.send({ image: video })
+          setTimeout(detect, 55)
+        }
+        detect()
+        statusEl.innerHTML = "<strong>手势已就绪</strong>。点右上角 🔇 开声音；食指预听，捏合连线，张掌横扫清行。"
+      } catch (err) {
+        statusEl.innerHTML = "<strong>手势模型加载失败</strong>。先用鼠标/触摸玩。"
+      }
+    }
+
+    async function startExperience(fromClick = false) {
+      if (booting) return
+      booting = true
+      startPanel.style.display = "none"
+      if (fromClick) ensureAudio()
+      await startCamera()
+      startHands()
+      booting = false
+    }
+
+    function pos(e) {
+      const r = canvas.getBoundingClientRect()
+      return { x: e.clientX - r.left, y: e.clientY - r.top, pinching: true }
+    }
+    canvas.addEventListener("pointerdown", e => {
+      pointerId = e.pointerId
+      canvas.setPointerCapture(pointerId)
+      mousePointer = pos(e)
+      canvas.classList.add("grabbing")
+      ensureAudio()
+    })
+    canvas.addEventListener("pointermove", e => { if (e.pointerId === pointerId) mousePointer = pos(e) })
+    canvas.addEventListener("pointerup", e => {
+      if (e.pointerId === pointerId) {
+        mousePointer = null
+        pointerId = null
+        canvas.classList.remove("grabbing")
+        endSelection()
+      }
+    })
+    canvas.addEventListener("pointercancel", () => {
+      mousePointer = null
+      pointerId = null
+      canvas.classList.remove("grabbing")
+      endSelection()
+    })
+
+    document.getElementById("startBtn").addEventListener("click", () => startExperience(true))
+    soundBtn.addEventListener("click", unlockSound)
+    document.getElementById("shuffleBtn").addEventListener("click", () => { ensureAudio(); resetGame(); addSpark(W / 2, H / 2, "#fff", 40) })
+    document.getElementById("flipBtn").addEventListener("click", () => { mirror = !mirror })
+    playBtn.addEventListener("click", () => {
+      if (!soundUnlocked) unlockSound()
+      else ensureAudio()
+      playing = !playing
+      playBtn.textContent = playing ? "⏸" : "▶"
+    })
+
+    window.addEventListener("resize", resize)
+    resize()
+    requestAnimationFrame(loop)
+    window.addEventListener("load", () => setTimeout(() => startExperience(false), 350))
+  </script>
+</body>
+</html>

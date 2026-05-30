@@ -1,0 +1,802 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>水果音乐九宫格 · 手势 Demo</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0d0c0a;
+      --paper: #fff7ea;
+      --ink: #181411;
+      --orange: #ff6b4a;
+      --pink: #ff9bb0;
+      --green: #53b97f;
+      --blue: #3aa7b7;
+      --yellow: #ffd166;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: var(--bg);
+      font-family: ui-rounded, "SF Pro Rounded", "PingFang SC", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+
+    canvas {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+      touch-action: none;
+      cursor: grab;
+    }
+
+    canvas.grabbing { cursor: grabbing; }
+    video { display: none; }
+
+    .start {
+      position: fixed;
+      inset: 0;
+      z-index: 30;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      background:
+        radial-gradient(circle at 18% 22%, rgba(255, 107, 74, .25), transparent 32%),
+        radial-gradient(circle at 78% 72%, rgba(83, 185, 127, .22), transparent 34%),
+        rgba(8, 7, 6, .76);
+      backdrop-filter: blur(18px);
+    }
+
+    .panel {
+      width: min(520px, 100%);
+      border-radius: 8px;
+      padding: 24px;
+      background: rgba(255, 247, 234, .94);
+      color: var(--ink);
+      box-shadow: 0 30px 90px rgba(0,0,0,.36);
+      border: 1px solid rgba(255,255,255,.2);
+    }
+
+    h1 {
+      margin: 0 0 10px;
+      font-size: clamp(30px, 7vw, 52px);
+      line-height: .96;
+      letter-spacing: 0;
+    }
+
+    p {
+      margin: 0 0 18px;
+      color: rgba(24,20,17,.7);
+      line-height: 1.65;
+      font-size: 15px;
+    }
+
+    button {
+      appearance: none;
+      border: 0;
+      font: inherit;
+      user-select: none;
+    }
+
+    #startBtn {
+      width: 100%;
+      height: 52px;
+      border-radius: 8px;
+      background: var(--orange);
+      color: #fff;
+      font-size: 17px;
+      font-weight: 900;
+      box-shadow: 0 12px 24px rgba(255,107,74,.34);
+    }
+
+    .small {
+      margin-top: 12px;
+      color: rgba(24,20,17,.52);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .topbar {
+      position: fixed;
+      left: 14px;
+      right: 14px;
+      top: 14px;
+      z-index: 20;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+      pointer-events: none;
+    }
+
+    .chips, .tools {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      pointer-events: auto;
+    }
+
+    .chip, .icon {
+      height: 38px;
+      border-radius: 8px;
+      border: 1px solid rgba(255,255,255,.18);
+      background: rgba(14, 12, 10, .58);
+      color: rgba(255,255,255,.82);
+      backdrop-filter: blur(14px);
+      box-shadow: 0 8px 24px rgba(0,0,0,.16);
+    }
+
+    .chip {
+      padding: 0 12px;
+      font-size: 13px;
+      font-weight: 850;
+    }
+
+    .chip.active {
+      background: rgba(255, 107, 74, .82);
+      color: white;
+    }
+
+    .icon {
+      width: 38px;
+      display: grid;
+      place-items: center;
+      font-size: 16px;
+    }
+
+    .status {
+      position: fixed;
+      z-index: 20;
+      left: 14px;
+      bottom: 14px;
+      max-width: min(520px, calc(100vw - 28px));
+      border-radius: 8px;
+      padding: 10px 12px;
+      border: 1px solid rgba(255,255,255,.16);
+      background: rgba(14, 12, 10, .56);
+      color: rgba(255,255,255,.82);
+      backdrop-filter: blur(14px);
+      font-size: 12px;
+      line-height: 1.48;
+      pointer-events: none;
+    }
+
+    .status strong { color: white; }
+
+    @media (max-width: 680px) {
+      .topbar { flex-direction: column; }
+      .tools { align-self: flex-end; }
+      .chips {
+        width: 100%;
+        overflow-x: auto;
+        flex-wrap: nowrap;
+      }
+      .chip { white-space: nowrap; }
+      .status { font-size: 11px; }
+    }
+  </style>
+</head>
+<body>
+  <canvas id="stage"></canvas>
+  <video id="camera" playsinline muted></video>
+
+  <div class="start" id="startPanel">
+    <section class="panel">
+      <h1>水果音乐九宫格</h1>
+      <p>用手捏住水果，把它们丢进九宫格。每个水果是一种声音，每个格子是一拍。先把玩法跑顺，后面再换成真实物体识别。</p>
+      <button id="startBtn">启动摄像头和手势</button>
+      <div class="small">没有摄像头或手势模型加载失败也没关系，鼠标和手指拖拽可以直接玩。</div>
+    </section>
+  </div>
+
+  <div class="topbar">
+    <div class="chips">
+      <button class="chip active" data-mode="grid">水果九宫格</button>
+      <button class="chip" data-mode="spark">指尖闪光</button>
+    </div>
+    <div class="tools">
+      <button class="icon" id="playBtn" title="播放/暂停">▶</button>
+      <button class="icon" id="resetBtn" title="重置水果">↺</button>
+      <button class="icon" id="flipBtn" title="翻转摄像头">⇄</button>
+    </div>
+  </div>
+
+  <div class="status" id="status"><strong>未启动</strong>。启动后 pinch 抓水果，拖进九宫格；鼠标/触摸也能玩。</div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+  <script>
+    const canvas = document.getElementById("stage")
+    const ctx = canvas.getContext("2d")
+    const video = document.getElementById("camera")
+    const startPanel = document.getElementById("startPanel")
+    const statusEl = document.getElementById("status")
+    const playBtn = document.getElementById("playBtn")
+    const DPR = Math.min(window.devicePixelRatio || 1, 2)
+
+    let W = 1
+    let H = 1
+    let mirror = true
+    let cameraOk = false
+    let audioCtx = null
+    let mode = "grid"
+    let playing = false
+    let beat = -1
+    let lastBeatAt = 0
+    let pointer = null
+    let handPointer = null
+    let mousePointer = null
+    let pointerId = null
+    let dragged = null
+    let hoverItem = null
+    let particles = []
+    let pulses = []
+    let grid = []
+    let items = []
+    let lastTime = performance.now()
+
+    const instruments = [
+      { id: "banana", label: "香蕉", emoji: "🍌", color: "#ffd166", freq: 196 },
+      { id: "apple", label: "苹果", emoji: "🍎", color: "#ff6b4a", freq: 262 },
+      { id: "lemon", label: "柠檬", emoji: "🍋", color: "#f7e66f", freq: 330 },
+      { id: "berry", label: "莓果", emoji: "🫐", color: "#7286ff", freq: 392 },
+      { id: "cup", label: "杯子", emoji: "🥤", color: "#3aa7b7", freq: 147 },
+      { id: "star", label: "星星", emoji: "⭐", color: "#ffcf55", freq: 523 },
+    ]
+
+    function resize() {
+      W = window.innerWidth
+      H = window.innerHeight
+      canvas.width = Math.floor(W * DPR)
+      canvas.height = Math.floor(H * DPR)
+      canvas.style.width = W + "px"
+      canvas.style.height = H + "px"
+      ctx.setTransform(DPR, 0, 0, DPR, 0, 0)
+      buildGrid()
+      resetItems(false)
+    }
+
+    function buildGrid() {
+      const size = Math.min(W * .46, H * .58, 430)
+      const x = W - size - Math.max(24, W * .06)
+      const y = H * .22
+      const gap = 10
+      const cell = (size - gap * 2) / 3
+      grid = []
+      for (let r = 0; r < 3; r++) {
+        for (let c = 0; c < 3; c++) {
+          grid.push({
+            index: r * 3 + c,
+            x: x + c * (cell + gap),
+            y: y + r * (cell + gap),
+            w: cell,
+            h: cell,
+            item: null,
+            glow: 0,
+          })
+        }
+      }
+    }
+
+    function resetItems(clearGrid = true) {
+      if (clearGrid) grid.forEach(cell => cell.item = null)
+      const leftW = Math.max(260, W * .45)
+      items = instruments.map((ins, i) => ({
+        ...ins,
+        x: Math.min(leftW, W * .18 + (i % 2) * 120),
+        y: H * .24 + Math.floor(i / 2) * 118,
+        vx: 0,
+        vy: 0,
+        r: Math.max(30, Math.min(45, W * .035)),
+        homeX: Math.min(leftW, W * .18 + (i % 2) * 120),
+        homeY: H * .24 + Math.floor(i / 2) * 118,
+        cell: null,
+        scale: 1,
+        grabbed: false,
+      }))
+    }
+
+    function cameraFill() {
+      ctx.save()
+      if (cameraOk && video.readyState >= 2) {
+        const vr = video.videoWidth / video.videoHeight || 16 / 9
+        const cr = W / H
+        let dw = W, dh = H, dx = 0, dy = 0
+        if (vr > cr) {
+          dh = H
+          dw = H * vr
+          dx = (W - dw) / 2
+        } else {
+          dw = W
+          dh = W / vr
+          dy = (H - dh) / 2
+        }
+        ctx.globalAlpha = .82
+        if (mirror) {
+          ctx.translate(W, 0)
+          ctx.scale(-1, 1)
+          ctx.drawImage(video, W - dx - dw, dy, dw, dh)
+        } else {
+          ctx.drawImage(video, dx, dy, dw, dh)
+        }
+        ctx.globalAlpha = 1
+        ctx.fillStyle = "rgba(8,7,6,.28)"
+        ctx.fillRect(0, 0, W, H)
+      } else {
+        const g = ctx.createLinearGradient(0, 0, W, H)
+        g.addColorStop(0, "#1b1713")
+        g.addColorStop(.52, "#101a1b")
+        g.addColorStop(1, "#0d0c0a")
+        ctx.fillStyle = g
+        ctx.fillRect(0, 0, W, H)
+      }
+      ctx.restore()
+    }
+
+    function roundedRect(x, y, w, h, r) {
+      ctx.beginPath()
+      ctx.moveTo(x + r, y)
+      ctx.arcTo(x + w, y, x + w, y + h, r)
+      ctx.arcTo(x + w, y + h, x, y + h, r)
+      ctx.arcTo(x, y + h, x, y, r)
+      ctx.arcTo(x, y, x + w, y, r)
+      ctx.closePath()
+    }
+
+    function drawGrid() {
+      ctx.save()
+      ctx.font = "900 20px ui-rounded, system-ui"
+      ctx.fillStyle = "rgba(255,255,255,.9)"
+      const first = grid[0]
+      ctx.fillText("音乐九宫格", first.x, first.y - 22)
+      ctx.font = "700 12px ui-rounded, system-ui"
+      ctx.fillStyle = "rgba(255,255,255,.55)"
+      ctx.fillText("把水果丢进去，每格是一拍", first.x, first.y - 4)
+
+      for (const cell of grid) {
+        if (cell.glow > 0) cell.glow *= .88
+        const active = playing && beat === cell.index
+        roundedRect(cell.x, cell.y, cell.w, cell.h, 12)
+        ctx.fillStyle = active
+          ? "rgba(255, 209, 102, .22)"
+          : "rgba(255,255,255,.075)"
+        ctx.fill()
+        ctx.strokeStyle = active
+          ? "rgba(255, 209, 102, .82)"
+          : "rgba(255,255,255,.2)"
+        ctx.lineWidth = active ? 3 : 1.5
+        ctx.stroke()
+
+        if (cell.glow > .02) {
+          ctx.save()
+          ctx.globalAlpha = cell.glow
+          ctx.shadowColor = "#fff"
+          ctx.shadowBlur = 20
+          roundedRect(cell.x + 4, cell.y + 4, cell.w - 8, cell.h - 8, 10)
+          ctx.strokeStyle = "rgba(255,255,255,.75)"
+          ctx.lineWidth = 2
+          ctx.stroke()
+          ctx.restore()
+        }
+
+        ctx.fillStyle = "rgba(255,255,255,.28)"
+        ctx.font = "800 12px ui-rounded, system-ui"
+        ctx.fillText(String(cell.index + 1), cell.x + 12, cell.y + 20)
+      }
+      ctx.restore()
+    }
+
+    function drawItem(item) {
+      ctx.save()
+      const isHover = hoverItem === item
+      const s = item.scale * (isHover ? 1.08 : 1)
+      ctx.translate(item.x, item.y)
+      ctx.scale(s, s)
+      ctx.shadowColor = item.color
+      ctx.shadowBlur = item.grabbed || isHover ? 28 : 14
+      ctx.fillStyle = "rgba(255,255,255,.12)"
+      ctx.beginPath()
+      ctx.arc(0, 0, item.r + 10, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.fillStyle = item.color
+      ctx.globalAlpha = .22
+      ctx.beginPath()
+      ctx.arc(0, 0, item.r + 2, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.globalAlpha = 1
+      ctx.font = `${item.r * 1.2}px "Apple Color Emoji", "Segoe UI Emoji", sans-serif`
+      ctx.textAlign = "center"
+      ctx.textBaseline = "middle"
+      ctx.fillText(item.emoji, 0, 2)
+      ctx.restore()
+
+      ctx.save()
+      ctx.textAlign = "center"
+      ctx.font = "800 12px ui-rounded, system-ui"
+      ctx.fillStyle = "rgba(255,255,255,.78)"
+      ctx.fillText(item.label, item.x, item.y + item.r + 26)
+      ctx.restore()
+    }
+
+    function drawPointer() {
+      const p = mousePointer || handPointer
+      if (!p) return
+      ctx.save()
+      ctx.strokeStyle = p.pinching ? "#ffd166" : "rgba(255,255,255,.72)"
+      ctx.lineWidth = 2
+      ctx.shadowColor = p.pinching ? "#ffd166" : "rgba(255,255,255,.5)"
+      ctx.shadowBlur = p.pinching ? 18 : 8
+      ctx.beginPath()
+      ctx.arc(p.x, p.y, p.pinching ? 22 : 12, 0, Math.PI * 2)
+      ctx.stroke()
+      ctx.fillStyle = p.pinching ? "#ffd166" : "rgba(255,255,255,.82)"
+      ctx.beginPath()
+      ctx.arc(p.x, p.y, 3, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.restore()
+    }
+
+    function addSpark(x, y, color = "#fff", count = 8) {
+      for (let i = 0; i < count; i++) {
+        const a = Math.random() * Math.PI * 2
+        const sp = 1 + Math.random() * 4
+        particles.push({
+          x, y,
+          vx: Math.cos(a) * sp,
+          vy: Math.sin(a) * sp,
+          life: .7 + Math.random() * .4,
+          max: 1,
+          size: 2 + Math.random() * 4,
+          color,
+        })
+      }
+    }
+
+    function addPulse(x, y, color) {
+      pulses.push({ x, y, r: 8, life: 1, color })
+    }
+
+    function drawEffects(dt) {
+      ctx.save()
+      for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i]
+        p.life -= dt * .0014
+        p.x += p.vx
+        p.y += p.vy
+        p.vy += .035
+        if (p.life <= 0) {
+          particles.splice(i, 1)
+          continue
+        }
+        ctx.globalAlpha = Math.max(0, p.life)
+        ctx.fillStyle = p.color
+        ctx.shadowColor = p.color
+        ctx.shadowBlur = 12
+        ctx.beginPath()
+        ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2)
+        ctx.fill()
+      }
+
+      for (let i = pulses.length - 1; i >= 0; i--) {
+        const p = pulses[i]
+        p.life -= dt * .0012
+        p.r += dt * .08
+        if (p.life <= 0) {
+          pulses.splice(i, 1)
+          continue
+        }
+        ctx.globalAlpha = Math.max(0, p.life)
+        ctx.strokeStyle = p.color
+        ctx.lineWidth = 3
+        ctx.shadowColor = p.color
+        ctx.shadowBlur = 18
+        ctx.beginPath()
+        ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2)
+        ctx.stroke()
+      }
+      ctx.restore()
+    }
+
+    function nearestItem(p) {
+      if (!p) return null
+      let best = null
+      let bestD = Infinity
+      for (const item of items) {
+        const d = Math.hypot(item.x - p.x, item.y - p.y)
+        if (d < bestD) {
+          bestD = d
+          best = item
+        }
+      }
+      return bestD < best.r + 28 ? best : null
+    }
+
+    function cellAt(x, y) {
+      return grid.find(cell =>
+        x >= cell.x && x <= cell.x + cell.w &&
+        y >= cell.y && y <= cell.y + cell.h
+      )
+    }
+
+    function beginDrag(item) {
+      if (!item) return
+      dragged = item
+      item.grabbed = true
+      item.cell = null
+      for (const cell of grid) {
+        if (cell.item === item) cell.item = null
+      }
+      canvas.classList.add("grabbing")
+      playSound(item.freq, item.color, .08)
+      addSpark(item.x, item.y, item.color, 10)
+    }
+
+    function endDrag() {
+      if (!dragged) return
+      const cell = cellAt(dragged.x, dragged.y)
+      if (cell) {
+        if (cell.item && cell.item !== dragged) {
+          cell.item.cell = null
+          cell.item.x = cell.item.homeX
+          cell.item.y = cell.item.homeY
+        }
+        cell.item = dragged
+        dragged.cell = cell.index
+        dragged.x = cell.x + cell.w / 2
+        dragged.y = cell.y + cell.h / 2
+        cell.glow = 1
+        addPulse(dragged.x, dragged.y, dragged.color)
+        addSpark(dragged.x, dragged.y, dragged.color, 18)
+        playSound(dragged.freq, dragged.color, .14)
+      } else if (dragged.cell == null) {
+        dragged.x += (dragged.homeX - dragged.x) * .7
+        dragged.y += (dragged.homeY - dragged.y) * .7
+      }
+      dragged.grabbed = false
+      dragged = null
+      canvas.classList.remove("grabbing")
+    }
+
+    function updateInteraction(dt) {
+      pointer = mousePointer || handPointer
+      hoverItem = nearestItem(pointer)
+
+      if (mode === "spark" && pointer) {
+        addSpark(pointer.x, pointer.y, pointer.pinching ? "#ffd166" : "#ffffff", pointer.pinching ? 3 : 1)
+        if (pointer.pinching && performance.now() % 130 < 18) addPulse(pointer.x, pointer.y, "#ffd166")
+      }
+
+      if (!pointer) {
+        if (dragged) endDrag()
+      } else if (pointer.pinching || mousePointer) {
+        if (!dragged && hoverItem) beginDrag(hoverItem)
+        if (dragged) {
+          dragged.x += (pointer.x - dragged.x) * .55
+          dragged.y += (pointer.y - dragged.y) * .55
+          dragged.vx = 0
+          dragged.vy = 0
+        }
+      } else if (dragged) {
+        endDrag()
+      }
+
+      for (const item of items) {
+        if (item === dragged) continue
+        const targetCell = item.cell != null ? grid[item.cell] : null
+        const tx = targetCell ? targetCell.x + targetCell.w / 2 : item.homeX
+        const ty = targetCell ? targetCell.y + targetCell.h / 2 : item.homeY
+        item.vx += (tx - item.x) * .018
+        item.vy += (ty - item.y) * .018
+        item.vx *= .82
+        item.vy *= .82
+        item.x += item.vx
+        item.y += item.vy
+        item.scale += ((targetCell ? .82 : 1) - item.scale) * .12
+      }
+    }
+
+    function ensureAudio() {
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)()
+      if (audioCtx.state === "suspended") audioCtx.resume()
+    }
+
+    function playSound(freq, color, dur = .12) {
+      ensureAudio()
+      const now = audioCtx.currentTime
+      const osc = audioCtx.createOscillator()
+      const gain = audioCtx.createGain()
+      const filter = audioCtx.createBiquadFilter()
+      osc.type = "sine"
+      osc.frequency.setValueAtTime(freq, now)
+      osc.frequency.exponentialRampToValueAtTime(freq * 1.6, now + dur * .55)
+      filter.type = "lowpass"
+      filter.frequency.setValueAtTime(1300, now)
+      gain.gain.setValueAtTime(.0001, now)
+      gain.gain.exponentialRampToValueAtTime(.22, now + .015)
+      gain.gain.exponentialRampToValueAtTime(.0001, now + dur)
+      osc.connect(filter)
+      filter.connect(gain)
+      gain.connect(audioCtx.destination)
+      osc.start(now)
+      osc.stop(now + dur + .02)
+    }
+
+    function updateBeat(now) {
+      if (!playing) return
+      if (now - lastBeatAt < 260) return
+      lastBeatAt = now
+      beat = (beat + 1) % 9
+      const cell = grid[beat]
+      cell.glow = 1
+      if (cell.item) {
+        playSound(cell.item.freq, cell.item.color, .11)
+        addPulse(cell.x + cell.w / 2, cell.y + cell.h / 2, cell.item.color)
+        addSpark(cell.x + cell.w / 2, cell.y + cell.h / 2, cell.item.color, 8)
+      }
+    }
+
+    function loop(now) {
+      const dt = Math.min(34, now - lastTime)
+      lastTime = now
+      updateInteraction(dt)
+      updateBeat(now)
+      cameraFill()
+      drawGrid()
+      for (const item of items) drawItem(item)
+      drawEffects(dt)
+      drawPointer()
+      requestAnimationFrame(loop)
+    }
+
+    async function startCamera() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } },
+          audio: false,
+        })
+        video.srcObject = stream
+        await video.play()
+        cameraOk = true
+        statusEl.innerHTML = "<strong>摄像头已启动</strong>。捏住水果拖到九宫格；点播放会循环敲格子。"
+      } catch (err) {
+        cameraOk = false
+        statusEl.innerHTML = "<strong>摄像头未开启</strong>。可以先用鼠标/触摸玩完整交互。"
+      }
+    }
+
+    async function startHands() {
+      if (!window.Hands || !cameraOk) return
+      try {
+        const hands = new Hands({
+          locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`,
+        })
+        hands.setOptions({
+          maxNumHands: 1,
+          modelComplexity: 1,
+          minDetectionConfidence: .68,
+          minTrackingConfidence: .68,
+        })
+        hands.onResults((results) => {
+          const hand = results.multiHandLandmarks && results.multiHandLandmarks[0]
+          if (!hand) {
+            handPointer = null
+            return
+          }
+          const thumb = hand[4]
+          const index = hand[8]
+          const mx = index.x
+          const my = index.y
+          const dist = Math.hypot(thumb.x - index.x, thumb.y - index.y)
+          const was = handPointer && handPointer.pinching
+          const pinching = was ? dist < .085 : dist < .055
+          handPointer = {
+            x: (mirror ? 1 - mx : mx) * W,
+            y: my * H,
+            pinching,
+          }
+        })
+
+        async function detect() {
+          if (video.readyState >= 2) await hands.send({ image: video })
+          requestAnimationFrame(detect)
+        }
+        detect()
+        statusEl.innerHTML = "<strong>手势已就绪</strong>。食指指向，拇指食指捏合抓取。"
+      } catch (err) {
+        statusEl.innerHTML = "<strong>手势模型没加载成功</strong>。鼠标/触摸 fallback 已可用。"
+      }
+    }
+
+    function pointerPos(e) {
+      const r = canvas.getBoundingClientRect()
+      return { x: e.clientX - r.left, y: e.clientY - r.top, pinching: true }
+    }
+
+    canvas.addEventListener("pointerdown", (e) => {
+      pointerId = e.pointerId
+      canvas.setPointerCapture(pointerId)
+      mousePointer = pointerPos(e)
+      ensureAudio()
+    })
+
+    canvas.addEventListener("pointermove", (e) => {
+      if (e.pointerId === pointerId) mousePointer = pointerPos(e)
+    })
+
+    canvas.addEventListener("pointerup", (e) => {
+      if (e.pointerId === pointerId) {
+        mousePointer = null
+        pointerId = null
+        endDrag()
+      }
+    })
+
+    canvas.addEventListener("pointercancel", () => {
+      mousePointer = null
+      pointerId = null
+      endDrag()
+    })
+
+    let booting = false
+
+    async function startExperience(fromClick = false) {
+      if (booting) return
+      booting = true
+      startPanel.style.display = "none"
+      if (fromClick) ensureAudio()
+      await startCamera()
+      startHands()
+      booting = false
+    }
+
+    document.getElementById("startBtn").addEventListener("click", async () => {
+      startExperience(true)
+    })
+
+    document.getElementById("playBtn").addEventListener("click", () => {
+      ensureAudio()
+      playing = !playing
+      playBtn.textContent = playing ? "⏸" : "▶"
+      if (playing) {
+        beat = -1
+        lastBeatAt = 0
+      }
+    })
+
+    document.getElementById("resetBtn").addEventListener("click", () => {
+      resetItems(true)
+      beat = -1
+      addSpark(W * .5, H * .5, "#fff", 24)
+    })
+
+    document.getElementById("flipBtn").addEventListener("click", () => {
+      mirror = !mirror
+    })
+
+    document.querySelectorAll(".chip").forEach(btn => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll(".chip").forEach(b => b.classList.remove("active"))
+        btn.classList.add("active")
+        mode = btn.dataset.mode
+        statusEl.innerHTML = mode === "grid"
+          ? "<strong>水果九宫格</strong>。捏住水果拖进格子，播放时每格会变成节拍。"
+          : "<strong>指尖闪光</strong>。移动手指/鼠标会留下光点，捏合会产生更强的光圈。"
+      })
+    })
+
+    window.addEventListener("resize", resize)
+    resize()
+    requestAnimationFrame(loop)
+
+    window.addEventListener("load", () => {
+      setTimeout(() => startExperience(false), 350)
+    })
+  </script>
+</body>
+</html>

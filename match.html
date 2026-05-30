@@ -280,17 +280,20 @@
     .status {
       position: fixed;
       z-index: 20;
-      left: 14px;
-      bottom: 14px;
-      max-width: min(560px, calc(100vw - 28px));
+      right: 14px;
+      top: clamp(230px, 50vh, 390px);
+      width: min(300px, calc(100vw - 28px));
+      max-height: min(42vh, 280px);
+      overflow: hidden;
       border-radius: 8px;
-      padding: 10px 12px;
+      padding: 12px 14px;
       border: 1px solid rgba(255,255,255,.16);
-      background: rgba(14,12,10,.56);
-      color: rgba(255,255,255,.82);
+      background: rgba(14,12,10,.62);
+      color: rgba(255,255,255,.86);
       backdrop-filter: blur(14px);
-      font-size: 12px;
-      line-height: 1.48;
+      box-shadow: 0 16px 42px rgba(0,0,0,.22);
+      font-size: 13px;
+      line-height: 1.55;
       pointer-events: none;
     }
 
@@ -318,7 +321,14 @@
       .pill > span:first-child { min-width: auto; }
       .score { font-size: 16px; }
       .icon { width: 34px; height: 34px; }
-      .status { font-size: 11px; }
+      .status {
+        top: auto;
+        right: 8px;
+        bottom: 96px;
+        width: min(260px, calc(100vw - 16px));
+        max-height: 148px;
+        font-size: 11px;
+      }
       .panel { padding: 18px; }
       .finish .panel { max-height: calc(100vh - 34px); overflow: auto; }
     }
@@ -388,7 +398,6 @@
     </section>
   </div>
 
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
   <script>
     const canvas = document.getElementById("stage")
     const ctx = canvas.getContext("2d")
@@ -406,7 +415,7 @@
     const shareCanvas = document.getElementById("shareCanvas")
     const shareCtx = shareCanvas.getContext("2d")
     const mouseChoicePanel = document.getElementById("mouseChoicePanel")
-    const DPR = Math.min(window.devicePixelRatio || 1, 2)
+    const DPR = Math.min(window.devicePixelRatio || 1, window.innerWidth < 700 ? 1.35 : 1.75)
 
     let W = 1
     let H = 1
@@ -463,12 +472,21 @@
     let gestureCoachUntil = 0
     let gestureCoachLastStep = -1
     let lastPointerSample = null
+    let backdropCache = null
+    let boardBgCache = null
+    let cameraFrameCache = null
+    let lastCameraFrameAt = 0
+    let handsLoadingPromise = null
+    let handsInstance = null
+    let handDetecting = false
+    let idleFrameDrawn = false
 
     let gridCols = 6
     let gridRows = 6
     const ROUND_MS = 3 * 60 * 1000
     const MAX_PARTICLES = 140
-    const HAND_FRAME_MS = 34
+    const HAND_FRAME_MS = 28
+    const fruitSpriteCache = new Map()
     const atianImage = new Image()
     atianImage.src = "assets/atian-cartoon.png"
     const fruits = [
@@ -510,6 +528,11 @@
       canvas.style.width = W + "px"
       canvas.style.height = H + "px"
       ctx.setTransform(DPR, 0, 0, DPR, 0, 0)
+      backdropCache = null
+      boardBgCache = null
+      cameraFrameCache = null
+      lastCameraFrameAt = 0
+      idleFrameDrawn = false
       buildCells()
       if (!board.length) makeBoard()
       layoutTiles(true)
@@ -520,6 +543,7 @@
       gridCols = firstRound ? 6 : 7
       gridRows = firstRound ? 6 : 7
       activeFruits = firstRound ? fruits.filter(fruit => firstRoundFruitIds.includes(fruit.id)) : fruits
+      boardBgCache = null
       buildCells()
     }
 
@@ -601,7 +625,7 @@
       const pathA = activeFruits[0] || fruits[0]
       const pathB = activeFruits[1] || fruits[1]
       const paths = [
-        { fruit: pathA, cells: [[1, 1], [2, 2], [3, 3]] },
+        { fruit: pathA, cells: [[1, 1], [1, 2], [2, 3]] },
         { fruit: pathB, cells: [[gridRows - 2, gridCols - 4], [gridRows - 2, gridCols - 3], [gridRows - 2, gridCols - 2]] },
       ]
       tutorialHintTiles = []
@@ -625,6 +649,11 @@
 
     function updateGoal() {
       goalEl.textContent = targetFruit ? `${targetFruit.emoji} ${targetHits}/${targetGoal}` : "--"
+    }
+
+    function goalPromptText() {
+      if (!targetFruit) return "先连目标水果，完成会送一个大水果。"
+      return `先连 ${targetFruit.emoji} ${targetHits}/${targetGoal}，完成会送一个大水果。`
     }
 
     function formatTime(ms) {
@@ -832,8 +861,8 @@
             addFloatText("再滑一点就行", t.x, t.y - 12, "rgba(255,255,255,.9)")
           }
           statusEl.innerHTML = inputMode === "camera"
-            ? "<strong>继续试一次</strong>。捏住后从第一个高亮水果滑到第三个；横着、竖着、斜着都可以连。"
-            : "<strong>继续试一次</strong>。按住鼠标拖过高亮水果；横着、竖着、斜着都可以连。"
+            ? "<strong>继续试一次</strong>。捏住后从第一个高亮水果滑到第三个；横着两个再斜一个也可以连。"
+            : "<strong>继续试一次</strong>。按住鼠标拖过高亮水果；横着两个再斜一个也可以连。"
           selected = []
           activeType = null
           return
@@ -878,7 +907,7 @@
       tilesToRemove.forEach((tile, i) => {
         addSpark(tile.x, tile.y, tile.color, tile.special === "bomb" ? 34 : 16)
         addPulse(tile.x, tile.y, tile.color)
-        playTone(tile.freq * (1 + i * .04), .08)
+        if (i < 5) playTone(tile.freq * (1 + i * .04), .08)
         board[tile.row][tile.col] = null
       })
 
@@ -1030,7 +1059,8 @@
       }
       for (let i = 0; i < bigFruits.length; i++) {
         const fruit = bigFruits[i]
-        fruit.pop = Math.max(0, fruit.pop - dt * .0014)
+        fruit.pop = Math.max(0, (fruit.pop || 0) - dt * .0014)
+        fruit.spin = Number.isFinite(fruit.spin) ? fruit.spin : 0
         const target = bigFruitPosition(i, bigFruits.length)
         const age = performance.now() - (fruit.awardedAt || 0)
         const fly = Math.min(1, Math.max(0, (age - 780) / 620))
@@ -1388,7 +1418,7 @@
       c.fill()
       c.fillStyle = "#6d4329"
       c.font = "900 26px ui-rounded, 'PingFang SC', system-ui"
-      c.fillText("atian-create.github.io/gesture-music-grid-demo/match.html", w / 2, 1340)
+      c.fillText("fruitmatch.midao.site", w / 2, 1340)
     }
 
     function roundRectOn(c, x, y, w, h, r) {
@@ -1436,8 +1466,8 @@
       }
       if (step === "practice") {
         statusEl.innerHTML = inputMode === "camera"
-          ? "<strong>第 3 步</strong>：捏住滑过 3 个高亮水果，横着、竖着、斜着都能连。"
-          : "<strong>第 3 步</strong>：按住鼠标拖过 3 个高亮水果，横着、竖着、斜着都能连。"
+          ? "<strong>第 3 步</strong>：捏住滑过 3 个高亮水果，横着两个再斜一个也能连。"
+          : "<strong>第 3 步</strong>：按住鼠标拖过 3 个高亮水果，横着两个再斜一个也能连。"
       }
     }
 
@@ -1639,9 +1669,10 @@
     }
 
     function addSpark(x, y, color, count = 8) {
-      if (particles.length > MAX_PARTICLES) particles.splice(0, particles.length - MAX_PARTICLES)
-      if (particles.length >= MAX_PARTICLES) return
-      const safeCount = Math.min(count, MAX_PARTICLES - particles.length)
+      const particleLimit = W < 700 ? 90 : MAX_PARTICLES
+      if (particles.length > particleLimit) particles.splice(0, particles.length - particleLimit)
+      if (particles.length >= particleLimit) return
+      const safeCount = Math.min(count, particleLimit - particles.length)
       for (let i = 0; i < safeCount; i++) {
         const a = Math.random() * Math.PI * 2
         const sp = 1 + Math.random() * 5
@@ -1657,6 +1688,7 @@
     }
 
     function addPulse(x, y, color) {
+      if (pulses.length > 50) pulses.splice(0, pulses.length - 50)
       pulses.push({ x, y, r: 8, life: 1, color })
     }
 
@@ -1694,59 +1726,88 @@
       const px = prev[keyX]
       const py = prev[keyY]
       const dist = Math.hypot(rawX - px, rawY - py)
-      if (dist < (pinching ? 1.6 : 3.4)) return { x: px, y: py }
-      const smooth = dist > 90 ? .06 : dist > 34 ? (pinching ? .12 : .22) : (pinching ? .24 : .42)
+      if (dist < (pinching ? .8 : 1.8)) return { x: px, y: py }
+      const smooth = dist > 90 ? .04 : dist > 34 ? (pinching ? .08 : .16) : (pinching ? .16 : .28)
       return {
         x: px * smooth + rawX * (1 - smooth),
         y: py * smooth + rawY * (1 - smooth),
       }
     }
 
+    function ensureBackdropCache() {
+      if (!backdropCache) {
+        const image = document.createElement("canvas")
+        image.width = Math.floor(W * DPR)
+        image.height = Math.floor(H * DPR)
+        const c = image.getContext("2d")
+        c.setTransform(DPR, 0, 0, DPR, 0, 0)
+        const g = c.createLinearGradient(0, 0, W, H)
+        g.addColorStop(0, "#211915")
+        g.addColorStop(.55, "#102021")
+        g.addColorStop(1, "#0b0a09")
+        c.fillStyle = g
+        c.fillRect(0, 0, W, H)
+        const glow = c.createRadialGradient(W * .5, H * .42, 40, W * .5, H * .42, Math.max(W, H) * .58)
+        glow.addColorStop(0, "rgba(255,209,102,.12)")
+        glow.addColorStop(.38, "rgba(83,185,127,.05)")
+        glow.addColorStop(1, "rgba(0,0,0,0)")
+        c.fillStyle = glow
+        c.fillRect(0, 0, W, H)
+        backdropCache = image
+      }
+      return backdropCache
+    }
+
     function drawBackdrop() {
-      const g = ctx.createLinearGradient(0, 0, W, H)
-      g.addColorStop(0, "#211915")
-      g.addColorStop(.55, "#102021")
-      g.addColorStop(1, "#0b0a09")
-      ctx.fillStyle = g
-      ctx.fillRect(0, 0, W, H)
-      const glow = ctx.createRadialGradient(W * .5, H * .42, 40, W * .5, H * .42, Math.max(W, H) * .58)
-      glow.addColorStop(0, "rgba(255,209,102,.12)")
-      glow.addColorStop(.38, "rgba(83,185,127,.05)")
-      glow.addColorStop(1, "rgba(0,0,0,0)")
-      ctx.fillStyle = glow
-      ctx.fillRect(0, 0, W, H)
+      ensureBackdropCache()
+      ctx.drawImage(backdropCache, 0, 0, W, H)
     }
 
     function drawCamera() {
       ctx.save()
       if (cameraOk && video.readyState >= 2) {
-        const vr = video.videoWidth / video.videoHeight || 16 / 9
-        const cr = W / H
-        let dw = W, dh = H, dx = 0, dy = 0
-        if (vr > cr) {
-          dh = H
-          dw = H * vr
-          dx = (W - dw) / 2
-        } else {
-          dw = W
-          dh = W / vr
-          dy = (H - dh) / 2
+        const now = performance.now()
+        const cameraFrameMs = W < 700 ? 50 : 33
+        if (!cameraFrameCache || now - lastCameraFrameAt > cameraFrameMs) {
+          if (!cameraFrameCache) {
+            cameraFrameCache = document.createElement("canvas")
+            cameraFrameCache.width = Math.floor(W * DPR)
+            cameraFrameCache.height = Math.floor(H * DPR)
+          }
+          const c = cameraFrameCache.getContext("2d")
+          c.setTransform(DPR, 0, 0, DPR, 0, 0)
+          c.clearRect(0, 0, W, H)
+          if (stageMode) c.drawImage(ensureBackdropCache(), 0, 0, W, H)
+          const vr = video.videoWidth / video.videoHeight || 16 / 9
+          const cr = W / H
+          let dw = W, dh = H, dx = 0, dy = 0
+          if (vr > cr) {
+            dh = H
+            dw = H * vr
+            dx = (W - dw) / 2
+          } else {
+            dw = W
+            dh = W / vr
+            dy = (H - dh) / 2
+          }
+          c.save()
+          c.globalAlpha = stageMode ? .28 : .48
+          c.filter = "none"
+          if (mirror) {
+            c.translate(W, 0)
+            c.scale(-1, 1)
+            c.drawImage(video, W - dx - dw, dy, dw, dh)
+          } else {
+            c.drawImage(video, dx, dy, dw, dh)
+          }
+          c.restore()
+          c.fillStyle = stageMode ? "rgba(6,5,4,.54)" : "rgba(6,5,4,.38)"
+          c.fillRect(0, 0, W, H)
+          c.fillStyle = stageMode ? "rgba(255,209,102,.06)" : "rgba(255,209,102,.035)"
+          c.fillRect(0, 0, W, H)
+          lastCameraFrameAt = now
         }
-        if (stageMode) drawBackdrop()
-        ctx.globalAlpha = stageMode ? .28 : .48
-        ctx.filter = "none"
-        if (mirror) {
-          ctx.translate(W, 0)
-          ctx.scale(-1, 1)
-          ctx.drawImage(video, W - dx - dw, dy, dw, dh)
-        } else {
-          ctx.drawImage(video, dx, dy, dw, dh)
-        }
-        ctx.globalAlpha = 1
-        ctx.fillStyle = stageMode ? "rgba(6,5,4,.54)" : "rgba(6,5,4,.38)"
-        ctx.fillRect(0, 0, W, H)
-        ctx.fillStyle = stageMode ? "rgba(255,209,102,.06)" : "rgba(255,209,102,.035)"
-        ctx.fillRect(0, 0, W, H)
+        ctx.drawImage(cameraFrameCache, 0, 0, W, H)
       } else {
         drawBackdrop()
       }
@@ -1754,7 +1815,10 @@
     }
 
     function activeTrees() {
-      return trees.filter(tree => tree.active || tree.pop > 0)
+      return trees
+        .filter(tree => tree.active || tree.pop > 0)
+        .sort((a, b) => (b.pop - a.pop) || (b.fruitCount - a.fruitCount))
+        .slice(0, W < 860 ? 3 : 4)
     }
 
     function orchardPosition(index, total) {
@@ -1985,26 +2049,37 @@
     }
 
     function drawBoard() {
-      const r = boardRect()
-      ctx.save()
-      ctx.shadowColor = "rgba(0,0,0,.35)"
-      ctx.shadowBlur = 28
-      ctx.shadowOffsetY = 16
-      roundRect(r.x - 10, r.y - 10, r.size + 20, r.size + 20, 20)
-      ctx.fillStyle = "rgba(255,247,234,.16)"
-      ctx.fill()
-      ctx.restore()
-
-      ctx.save()
-      for (const cell of cells) {
-        roundRect(cell.x + 4, cell.y + 4, cell.size - 8, cell.size - 8, 14)
-        ctx.fillStyle = "rgba(255,255,255,.075)"
-        ctx.fill()
-        ctx.strokeStyle = "rgba(255,255,255,.12)"
-        ctx.lineWidth = 1
-        ctx.stroke()
+      if (boardBgCache) {
+        ctx.drawImage(boardBgCache, 0, 0, W, H)
+        return
       }
-      ctx.restore()
+      const r = boardRect()
+      const image = document.createElement("canvas")
+      image.width = Math.floor(W * DPR)
+      image.height = Math.floor(H * DPR)
+      const c = image.getContext("2d")
+      c.setTransform(DPR, 0, 0, DPR, 0, 0)
+      c.save()
+      c.shadowColor = "rgba(0,0,0,.35)"
+      c.shadowBlur = 28
+      c.shadowOffsetY = 16
+      roundRectOn(c, r.x - 10, r.y - 10, r.size + 20, r.size + 20, 20)
+      c.fillStyle = "rgba(255,247,234,.16)"
+      c.fill()
+      c.restore()
+
+      c.save()
+      for (const cell of cells) {
+        roundRectOn(c, cell.x + 4, cell.y + 4, cell.size - 8, cell.size - 8, 14)
+        c.fillStyle = "rgba(255,255,255,.075)"
+        c.fill()
+        c.strokeStyle = "rgba(255,255,255,.12)"
+        c.lineWidth = 1
+        c.stroke()
+      }
+      c.restore()
+      boardBgCache = image
+      ctx.drawImage(boardBgCache, 0, 0, W, H)
     }
 
     function drawSelectionLine() {
@@ -2075,7 +2150,7 @@
       ctx.textAlign = "center"
       ctx.shadowColor = "rgba(0,0,0,.65)"
       ctx.shadowBlur = 8
-      ctx.fillText("斜着 3 个也能连", mid.x, mid.y - boardRect().cell * .62)
+      ctx.fillText("横着两个，再斜一个也能连", mid.x, mid.y - boardRect().cell * .62)
       ctx.restore()
     }
 
@@ -2113,6 +2188,32 @@
     }
 
     function drawFruitIcon(fruit, size, x = 0, y = 0, targetCtx = ctx) {
+      if (!fruit || !Number.isFinite(size) || size <= 0) return
+      const id = fruit.type || fruit.id || fruit.emoji || "fruit"
+      const bucket = Math.max(18, Math.round(size / 3) * 3)
+      const scale = Math.min(DPR || 1, 2)
+      const cacheKey = `${id}:${fruit.color || ""}:${bucket}:${scale}`
+      let sprite = fruitSpriteCache.get(cacheKey)
+      if (!sprite) {
+        const pad = Math.ceil(bucket * .34)
+        const logical = bucket + pad * 2
+        const image = document.createElement("canvas")
+        image.width = Math.ceil(logical * scale)
+        image.height = Math.ceil(logical * scale)
+        const imageCtx = image.getContext("2d")
+        imageCtx.setTransform(scale, 0, 0, scale, 0, 0)
+        drawFruitIconRaw(fruit, bucket, logical / 2, logical / 2, imageCtx)
+        sprite = { image, logical }
+        fruitSpriteCache.set(cacheKey, sprite)
+        if (fruitSpriteCache.size > 72) {
+          const firstKey = fruitSpriteCache.keys().next().value
+          fruitSpriteCache.delete(firstKey)
+        }
+      }
+      targetCtx.drawImage(sprite.image, x - sprite.logical / 2, y - sprite.logical / 2, sprite.logical, sprite.logical)
+    }
+
+    function drawFruitIconRaw(fruit, size, x = 0, y = 0, targetCtx = ctx) {
       const c = targetCtx
       const id = fruit.type || fruit.id
       const color = fruit.color || "#ffd166"
@@ -2329,7 +2430,7 @@
       const targetScale = isSelected ? 1.16 : (isArmedBomb ? 1.13 : (isHover ? 1.08 : 1))
       tile.scale += (targetScale - tile.scale) * .18
       const cell = cellAt(tile.row, tile.col)
-      const r = Math.min(cell.size * .34, 42) * tile.scale
+      const r = Math.min(cell.size * .34, 42)
 
       ctx.save()
       ctx.translate(tile.x, tile.y)
@@ -2401,24 +2502,35 @@
       if (!targetFruit || gameOver) return
       const r = boardRect()
       const progress = Math.min(1, targetHits / targetGoal)
-      const x = r.x
-      const y = r.y - 42
+      const boxW = Math.min(r.size, W < 680 ? W - 24 : 560)
+      const boxH = W < 680 ? 42 : 48
+      const x = Math.max(12, Math.min(W - boxW - 12, r.x + (r.size - boxW) / 2))
+      const y = Math.max(W < 680 ? 72 : 82, r.y - (W < 680 ? 56 : 68))
       ctx.save()
-      roundRect(x, y, r.size, 20, 10)
-      ctx.fillStyle = "rgba(255,255,255,.12)"
+      roundRect(x, y, boxW, boxH, 14)
+      ctx.fillStyle = "rgba(24,20,17,.72)"
       ctx.fill()
-      roundRect(x, y, r.size * progress, 20, 10)
-      ctx.fillStyle = targetFruit.color
-      ctx.globalAlpha = .86
-      ctx.fill()
-      ctx.globalAlpha = 1
-      ctx.fillStyle = "#fff"
-      ctx.font = "900 13px ui-rounded, 'PingFang SC', system-ui"
-      ctx.textAlign = "center"
+      ctx.strokeStyle = "rgba(255,255,255,.22)"
+      ctx.lineWidth = 2
+      ctx.stroke()
+      drawFruitIcon(targetFruit, W < 680 ? 32 : 38, x + 30, y + boxH / 2)
+      ctx.fillStyle = "#fff7ea"
+      ctx.font = `900 ${W < 680 ? 12 : 16}px ui-rounded, 'PingFang SC', system-ui`
+      ctx.textAlign = "left"
       ctx.textBaseline = "middle"
       ctx.shadowColor = "rgba(0,0,0,.55)"
       ctx.shadowBlur = 8
-      ctx.fillText(`目标 ${targetFruit.emoji} ${targetHits}/${targetGoal}`, x + r.size / 2, y + 10)
+      ctx.fillText(goalPromptText(), x + (W < 680 ? 54 : 60), y + boxH * .38)
+      const barX = x + (W < 680 ? 54 : 60)
+      const barY = y + boxH - 12
+      const barW = boxW - (W < 680 ? 72 : 86)
+      roundRect(barX, barY, barW, 6, 3)
+      ctx.shadowBlur = 0
+      ctx.fillStyle = "rgba(255,255,255,.22)"
+      ctx.fill()
+      roundRect(barX, barY, barW * progress, 6, 3)
+      ctx.fillStyle = targetFruit.color
+      ctx.fill()
       ctx.restore()
     }
 
@@ -2513,23 +2625,29 @@
       const messages = {
         aim: inputMode === "camera" ? "伸出食指，让黄色“食指”点对准光点" : "移动鼠标，对准屏幕上的光点",
         pinch: inputMode === "camera" ? "食指和大拇指碰在一起，就是选中" : "按住鼠标，准备拖动",
-        practice: inputMode === "camera" ? "捏住滑过高亮水果，斜着 3 个也能连" : "按住鼠标拖过高亮水果，斜着 3 个也能连",
+        practice: inputMode === "camera" ? "捏住滑过高亮水果：横着两个，再斜一个" : "按住鼠标拖过高亮水果：横着两个，再斜一个",
       }
       ctx.save()
-      const boxW = Math.min(520, W - 28)
-      const boxX = (W - boxW) / 2
-      const boxY = Math.max(W < 680 ? 104 : 78, r.y - 58)
-      roundRect(boxX, boxY, boxW, 46, 8)
-      ctx.fillStyle = "rgba(255,247,234,.94)"
+      const boxW = Math.min(W < 680 ? 260 : 310, W - 24)
+      const boxX = W < 680 ? W - boxW - 8 : Math.min(W - boxW - 14, r.x + r.size + 18)
+      const boxY = W < 680 ? 90 : 118
+      roundRect(boxX, boxY, boxW, 58, 10)
+      ctx.fillStyle = "rgba(255,247,234,.88)"
       ctx.shadowColor = "rgba(0,0,0,.32)"
       ctx.shadowBlur = 18
       ctx.fill()
       ctx.shadowBlur = 0
+      ctx.strokeStyle = "rgba(255,255,255,.42)"
+      ctx.lineWidth = 1.5
+      ctx.stroke()
       ctx.fillStyle = "#181411"
-      ctx.font = "900 16px ui-rounded, 'PingFang SC', system-ui"
-      ctx.textAlign = "center"
+      ctx.font = `900 ${W < 680 ? 12 : 14}px ui-rounded, 'PingFang SC', system-ui`
+      ctx.textAlign = "left"
       ctx.textBaseline = "middle"
-      ctx.fillText(messages[tutorialStep] || messages.practice, W / 2, boxY + 23)
+      ctx.fillText(tutorialStep === "practice" ? "教学 3/3" : (tutorialStep === "pinch" ? "教学 2/3" : "教学 1/3"), boxX + 14, boxY + 18)
+      ctx.fillStyle = "rgba(24,20,17,.72)"
+      ctx.font = `800 ${W < 680 ? 10 : 12}px ui-rounded, 'PingFang SC', system-ui`
+      ctx.fillText(messages[tutorialStep] || messages.practice, boxX + 14, boxY + 40)
 
       if (tutorialStep === "aim" || tutorialStep === "pinch") {
         const x = W / 2
@@ -2583,10 +2701,10 @@
         ["松开爆开", "捏住划过，松开爆开"],
       ]
       const r = boardRect()
-      const boxW = Math.min(720, W - 28)
-      const boxX = (W - boxW) / 2
-      const boxY = Math.max(W < 680 ? 96 : 74, r.y - 76)
-      const boxH = W < 680 ? 132 : 118
+      const boxW = Math.min(W < 680 ? 260 : 310, W - 24)
+      const boxX = W < 680 ? W - boxW - 8 : Math.min(W - boxW - 14, r.x + r.size + 18)
+      const boxY = W < 680 ? 90 : 182
+      const boxH = W < 680 ? 162 : 176
       ctx.save()
       roundRect(boxX, boxY, boxW, boxH, 14)
       ctx.fillStyle = "rgba(24,20,17,.86)"
@@ -2598,23 +2716,22 @@
       ctx.stroke()
       ctx.shadowBlur = 0
       ctx.fillStyle = "#fff7ea"
-      ctx.font = `900 ${W < 680 ? 15 : 20}px ui-rounded, 'PingFang SC', system-ui`
-      ctx.textAlign = "center"
+      ctx.font = `900 ${W < 680 ? 14 : 17}px ui-rounded, 'PingFang SC', system-ui`
+      ctx.textAlign = "left"
       ctx.textBaseline = "middle"
-      ctx.fillText("30 秒手势教学", W / 2, boxY + 24)
+      ctx.fillText("30 秒手势教学", boxX + 16, boxY + 24)
       const cardGap = 8
-      const cardW = (boxW - 36 - cardGap * 2) / 3
+      const cardW = boxW - 32
       for (let i = 0; i < 3; i++) {
-        const x = boxX + 18 + i * (cardW + cardGap)
-        const y = boxY + 46
-        roundRect(x, y, cardW, W < 680 ? 58 : 50, 10)
+        const x = boxX + 16
+        const y = boxY + 44 + i * (W < 680 ? 34 : 36)
+        roundRect(x, y, cardW, W < 680 ? 28 : 30, 8)
         ctx.fillStyle = i === step ? "rgba(255,210,31,.96)" : "rgba(255,255,255,.12)"
         ctx.fill()
         ctx.fillStyle = i === step ? "#181411" : "rgba(255,255,255,.9)"
-        ctx.font = `900 ${W < 680 ? 12 : 14}px ui-rounded, 'PingFang SC', system-ui`
-        ctx.fillText(`${i + 1}. ${messages[i][0]}`, x + cardW / 2, y + 18)
-        ctx.font = `800 ${W < 680 ? 9 : 11}px ui-rounded, 'PingFang SC', system-ui`
-        ctx.fillText(messages[i][1], x + cardW / 2, y + (W < 680 ? 40 : 36))
+        ctx.font = `900 ${W < 680 ? 11 : 12}px ui-rounded, 'PingFang SC', system-ui`
+        ctx.textAlign = "left"
+        ctx.fillText(`${i + 1}. ${messages[i][0]}：${messages[i][1]}`, x + 10, y + (W < 680 ? 15 : 16))
       }
       const barW = boxW - 44
       roundRect(boxX + 22, boxY + boxH - 16, barW, 6, 3)
@@ -2624,27 +2741,28 @@
       ctx.fillStyle = "#ffd76a"
       ctx.fill()
 
-      if (!handPointer) {
-        const x = W / 2
-        const y = Math.min(H - 96, r.y + r.size * .72)
+      if (!handPointer || !handPointer.pinching) {
+        const x = boxX + boxW / 2
+        const y = boxY + boxH - 44
         ctx.strokeStyle = "rgba(255,210,31,.9)"
-        ctx.lineWidth = 5
+        ctx.lineWidth = 4
         ctx.shadowColor = "#ffd21f"
-        ctx.shadowBlur = 20
+        ctx.shadowBlur = 16
         ctx.beginPath()
-        ctx.arc(x - 32, y, 18, 0, Math.PI * 2)
+        ctx.arc(x - 25, y, 13, 0, Math.PI * 2)
         ctx.stroke()
         ctx.beginPath()
-        ctx.arc(x + 32, y, 18, 0, Math.PI * 2)
+        ctx.arc(x + 25, y, 13, 0, Math.PI * 2)
         ctx.stroke()
         ctx.beginPath()
-        ctx.moveTo(x - 14, y)
-        ctx.lineTo(x + 14, y)
+        ctx.moveTo(x - 10, y)
+        ctx.lineTo(x + 10, y)
         ctx.stroke()
         ctx.shadowBlur = 0
         ctx.fillStyle = "rgba(255,255,255,.92)"
-        ctx.font = "900 13px ui-rounded, 'PingFang SC', system-ui"
-        ctx.fillText("让食指和大拇指在画面里清楚分开 / 碰合", x, y + 42)
+        ctx.font = `900 ${W < 680 ? 10 : 11}px ui-rounded, 'PingFang SC', system-ui`
+        ctx.textAlign = "center"
+        ctx.fillText(handPointer ? "把两根手指碰在一起" : "先让食指和拇指出现在画面里", x, y + 28)
       }
       ctx.restore()
     }
@@ -2694,6 +2812,14 @@
     function loop(now) {
       const dt = Math.min(34, now - lastTime)
       lastTime = now
+      if (inputMode === "idle" && !booting) {
+        if (!idleFrameDrawn) {
+          drawCamera()
+          idleFrameDrawn = true
+        }
+        requestAnimationFrame(loop)
+        return
+      }
       frameCount += 1
       updateRound()
       updatePointer()
@@ -2742,19 +2868,36 @@
       }
     }
 
+    function loadHandsScript() {
+      if (window.Hands) return Promise.resolve()
+      if (handsLoadingPromise) return handsLoadingPromise
+      statusEl.innerHTML = "<strong>正在加载手势识别</strong>。第一次打开需要几秒，鼠标试玩不受影响。"
+      handsLoadingPromise = new Promise((resolve, reject) => {
+        const script = document.createElement("script")
+        script.src = "https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"
+        script.async = true
+        script.onload = resolve
+        script.onerror = () => reject(new Error("hands script failed"))
+        document.head.appendChild(script)
+      })
+      return handsLoadingPromise
+    }
+
     async function startHands() {
-      if (!window.Hands || !cameraOk) return
+      if (!cameraOk) return
       try {
-        const hands = new Hands({
-          locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`,
-        })
-        hands.setOptions({
-          maxNumHands: 1,
-          modelComplexity: 0,
-          minDetectionConfidence: .72,
-          minTrackingConfidence: .72,
-        })
-        hands.onResults((results) => {
+        await loadHandsScript()
+        if (!handsInstance) {
+          handsInstance = new Hands({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`,
+          })
+          handsInstance.setOptions({
+            maxNumHands: 1,
+            modelComplexity: 0,
+            minDetectionConfidence: .72,
+            minTrackingConfidence: .72,
+          })
+          handsInstance.onResults((results) => {
           const hand = results.multiHandLandmarks && results.multiHandLandmarks[0]
           if (!hand) {
             handPointer = null
@@ -2788,21 +2931,29 @@
             justPinched: !was && pinching,
           }
         })
+        }
 
         async function detect() {
+          if (!cameraOk || !video.srcObject) {
+            handDetecting = false
+            return
+          }
           const now = performance.now()
           if (!handBusy && video.readyState >= 2 && now - lastHandSentAt >= HAND_FRAME_MS) {
             handBusy = true
             lastHandSentAt = now
             try {
-              await hands.send({ image: video })
+              await handsInstance.send({ image: video })
             } finally {
               handBusy = false
             }
           }
           requestAnimationFrame(detect)
         }
-        detect()
+        if (!handDetecting) {
+          handDetecting = true
+          detect()
+        }
         statusEl.innerHTML = "<strong>手势已就绪</strong>。手离摄像头约 40-70cm；食指瞄准，大拇指和食指捏合确认，背景越简单越稳。"
       } catch (err) {
         statusEl.innerHTML = "<strong>手势模型加载失败</strong>。先用鼠标/触摸玩。"
@@ -2813,6 +2964,7 @@
       if (booting) return
       booting = true
       inputMode = mode
+      idleFrameDrawn = false
       startPanel.style.display = "none"
       ensureAudio()
       if (mode === "camera") {
@@ -2869,8 +3021,16 @@
     })
 
     canvas.addEventListener("pointermove", (e) => {
-      if (e.pointerId === pointerId) mousePointer = pos(e, true)
-      else if (inputMode === "mouse" && e.pointerType === "mouse") mousePointer = pos(e, false)
+      const events = typeof e.getCoalescedEvents === "function" ? e.getCoalescedEvents() : [e]
+      for (const event of events) {
+        if (e.pointerId === pointerId) {
+          mousePointer = pos(event, true)
+          if (selecting && lastPointerSample) extendSelectionAlongPath(lastPointerSample, mousePointer)
+          lastPointerSample = { x: mousePointer.x, y: mousePointer.y, pinching: true }
+        } else if (inputMode === "mouse" && e.pointerType === "mouse") {
+          mousePointer = pos(event, false)
+        }
+      }
     })
 
     canvas.addEventListener("pointerup", (e) => {
@@ -2915,9 +3075,13 @@
     })
     document.getElementById("flipBtn").addEventListener("click", () => {
       mirror = !mirror
+      cameraFrameCache = null
+      lastCameraFrameAt = 0
     })
     document.getElementById("sceneBtn").addEventListener("click", () => {
       stageMode = !stageMode
+      cameraFrameCache = null
+      lastCameraFrameAt = 0
       document.getElementById("sceneBtn").textContent = stageMode ? "◐" : "◉"
       statusEl.innerHTML = stageMode
         ? "<strong>舞台模式</strong>。人物变成柔和背景，手势光标和水果更清楚。"

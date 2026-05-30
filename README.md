@@ -8,7 +8,7 @@
 
 ## 在线体验
 
-- 体验入口：`https://atian-create.github.io/gesture-music-grid-demo/match.html`
+- 体验入口：`https://fruitmatch.midao.site/`
 - GitHub：`https://github.com/atian-create/gesture-music-grid-demo`
 
 ## 截图
@@ -36,8 +36,9 @@
 
 ```text
 .
-├── index.html          # 水果音乐九宫格原型
-├── match.html          # 空间水果消消乐主入口
+├── index.html          # 空间水果消消乐正式入口
+├── match.html          # 空间水果消消乐备用入口
+├── music-grid.html     # 水果音乐九宫格原型
 ├── arcade.html         # Boss 战 / 节奏器版本
 ├── assets/
 │   └── atian-cartoon.png
@@ -53,7 +54,7 @@ python3 -m http.server 5175
 然后打开：
 
 ```text
-http://localhost:5175/match.html
+http://localhost:5175/
 ```
 
 ## 技术说明

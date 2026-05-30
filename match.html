@@ -380,8 +380,8 @@
 
   <div class="share" id="sharePanel">
     <section class="panel">
-      <h1>战绩图</h1>
-      <p>适合发小红书的竖版图，所有内容都在本地生成。</p>
+      <h1>我的战绩</h1>
+      <p>图片已在本地生成，可以直接保存。</p>
       <canvas id="shareCanvas" width="1080" height="1440"></canvas>
       <button id="downloadShareBtn">下载图片</button>
       <button id="closeShareBtn">关闭</button>
@@ -406,7 +406,7 @@
     const shareCanvas = document.getElementById("shareCanvas")
     const shareCtx = shareCanvas.getContext("2d")
     const mouseChoicePanel = document.getElementById("mouseChoicePanel")
-    const DPR = Math.min(window.devicePixelRatio || 1, 1.25)
+    const DPR = Math.min(window.devicePixelRatio || 1, 2)
 
     let W = 1
     let H = 1
@@ -460,6 +460,9 @@
     let mouseChoiceShown = false
     let lastGestureTipAt = 0
     let handDistanceState = "unknown"
+    let gestureCoachUntil = 0
+    let gestureCoachLastStep = -1
+    let lastPointerSample = null
 
     let gridCols = 6
     let gridRows = 6
@@ -469,15 +472,15 @@
     const atianImage = new Image()
     atianImage.src = "assets/atian-cartoon.png"
     const fruits = [
-      { id: "banana", emoji: "🍌", color: "#ffd76a", freq: 196 },
-      { id: "apple", emoji: "🍎", color: "#ff7f6e", freq: 262 },
-      { id: "grape", emoji: "🍇", color: "#b896ff", freq: 330 },
-      { id: "berry", emoji: "🫐", color: "#7aa7ff", freq: 392 },
-      { id: "lemon", emoji: "🍋", color: "#f5e96b", freq: 523 },
-      { id: "kiwi", emoji: "🥝", color: "#73d99a", freq: 440 },
-      { id: "orange", emoji: "🍊", color: "#ffb45b", freq: 294 },
-      { id: "peach", emoji: "🍑", color: "#ffa7b4", freq: 349 },
-      { id: "cherry", emoji: "🍒", color: "#ff5d73", freq: 587 },
+      { id: "banana", emoji: "🍌", color: "#ffd21f", freq: 196 },
+      { id: "apple", emoji: "🍎", color: "#ff3b30", freq: 262 },
+      { id: "grape", emoji: "🍇", color: "#9dde35", freq: 330 },
+      { id: "berry", emoji: "🫐", color: "#3478ff", freq: 392 },
+      { id: "lemon", emoji: "🍋", color: "#fff238", freq: 523 },
+      { id: "kiwi", emoji: "🥝", color: "#34c759", freq: 440 },
+      { id: "orange", emoji: "🍊", color: "#ff9500", freq: 294 },
+      { id: "peach", emoji: "🍑", color: "#ff5a45", freq: 349 },
+      { id: "cherry", emoji: "🍒", color: "#ff2d55", freq: 587 },
     ]
     const firstRoundFruitIds = ["banana", "apple", "grape", "berry", "lemon", "kiwi"]
     let activeFruits = fruits
@@ -731,7 +734,7 @@
       if (tile.special === "bomb") {
         statusEl.innerHTML = "<strong>炸弹已瞄准</strong>。食指和大拇指合拢点击两下，即可确认消除 9 宫格。"
       } else {
-        statusEl.innerHTML = `<strong>已确认 ${tile.emoji}</strong>。保持食指和大拇指捏住，滑向相邻同类水果。`
+        statusEl.innerHTML = `<strong>已选中 ${tile.emoji}</strong>。手指碰在一起继续连，横竖斜都可以；放开就爆开。`
       }
     }
 
@@ -779,9 +782,23 @@
       }
     }
 
+    function extendSelectionAlongPath(from, to) {
+      if (!selecting || !from || !to) return
+      const r = boardRect()
+      const dist = Math.hypot(to.x - from.x, to.y - from.y)
+      const steps = Math.min(18, Math.max(2, Math.ceil(dist / (r.cell * .22))))
+      for (let i = 1; i <= steps; i++) {
+        const x = from.x + (to.x - from.x) * (i / steps)
+        const y = from.y + (to.y - from.y) * (i / steps)
+        const tile = tileAt(x, y)
+        if (tile) extendSelection(tile)
+      }
+    }
+
     function endSelection() {
       if (!selecting) return
       selecting = false
+      lastPointerSample = null
       const tutorialPractice = tutorialActive && tutorialStep === "practice"
       if (tutorialPractice) {
         const hints = tutorialPracticeHints()
@@ -804,6 +821,7 @@
           addFloatText("再点一下引爆", selected[0].x, selected[0].y - 32, specials.bomb.color, 1)
           statusEl.innerHTML = "<strong>炸弹需要二次确认</strong>。食指和大拇指合拢点击两下，即可消除 9 宫格。"
         } else {
+          screenShake = Math.max(screenShake, 2.2)
           removeSelected()
         }
       } else {
@@ -1099,6 +1117,8 @@
       oneMinuteShown = false
       atianPopup = null
       bigFruits = []
+      gestureCoachUntil = 0
+      gestureCoachLastStep = -1
       scoreEl.textContent = "0"
       comboEl.textContent = "0"
       mouseChoicePanel.classList.remove("show")
@@ -1115,8 +1135,10 @@
       chooseGoal()
       addSpark(W / 2, H / 2, "#fff", 32)
       statusEl.innerHTML = startTimer
-        ? "<strong>新一轮开始</strong>。食指先瞄准水果，食指和大拇指捏住确认；松开即可重新选择。"
-        : "<strong>新手校准</strong>。先熟悉瞄准和捏合，完成 3 连后再正式计时。"
+        ? (inputMode === "mouse"
+          ? "<strong>新一轮开始</strong>。按住拖过同类水果，横着、竖着、斜着都可以；松开就爆开。"
+          : "<strong>新一轮开始</strong>。食指瞄准，拇指碰食指选中；松开就爆开。")
+        : "<strong>新手校准</strong>。先熟悉瞄准和确认，完成 3 连后再正式计时。"
     }
 
     function finishGame() {
@@ -1150,36 +1172,189 @@
       const c = shareCtx
       const w = shareCanvas.width
       const h = shareCanvas.height
-      const g = c.createLinearGradient(0, 0, w, h)
-      g.addColorStop(0, "#fff7ea")
-      g.addColorStop(.55, "#ffe3b3")
-      g.addColorStop(1, "#d8f4dc")
-      c.fillStyle = g
+      const bg = c.createLinearGradient(0, 0, 0, h)
+      bg.addColorStop(0, "#bff0a2")
+      bg.addColorStop(.46, "#fff0bd")
+      bg.addColorStop(1, "#d5f3b9")
+      c.fillStyle = bg
       c.fillRect(0, 0, w, h)
 
-      c.fillStyle = "rgba(255,107,74,.16)"
-      c.beginPath()
-      c.arc(150, 180, 180, 0, Math.PI * 2)
+      c.fillStyle = "#a7da80"
+      for (let i = 0; i < 16; i++) {
+        c.beginPath()
+        c.arc((i * 86) % w, 1380 + Math.sin(i) * 30, 88 + (i % 4) * 16, 0, Math.PI * 2)
+        c.fill()
+      }
+      c.fillStyle = "rgba(255,255,255,.48)"
+      for (let i = 0; i < 12; i++) {
+        c.beginPath()
+        c.arc(62 + i * 92, 220 + (i % 3) * 28, 38, 0, Math.PI * 2)
+        c.fill()
+      }
+
+      c.save()
+      c.shadowColor = "rgba(88,62,34,.25)"
+      c.shadowBlur = 18
+      roundRectOn(c, 52, 42, 250, 166, 30)
+      c.fillStyle = "#fff6dd"
       c.fill()
-      c.fillStyle = "rgba(83,185,127,.18)"
+      c.shadowBlur = 0
+      c.strokeStyle = "#9d6a3f"
+      c.lineWidth = 6
+      c.stroke()
+      c.fillStyle = "#f3ba70"
+      roundRectOn(c, 84, 72, 90, 90, 24)
+      c.fill()
+      c.strokeStyle = "#7d5130"
+      c.lineWidth = 5
+      c.stroke()
       c.beginPath()
-      c.arc(900, 1150, 260, 0, Math.PI * 2)
+      c.arc(129, 117, 30, 0, Math.PI * 2)
+      c.fillStyle = "#ffe3bb"
+      c.fill()
+      c.fillStyle = "#7d5130"
+      c.font = "900 38px ui-rounded, 'PingFang SC', system-ui"
+      c.textAlign = "center"
+      c.fillText("甜", 129, 130)
+      c.fillStyle = "#805331"
+      c.font = "900 30px ui-rounded, 'PingFang SC', system-ui"
+      c.fillText("阿甜果园主", 205, 100)
+      c.fillStyle = "#a56f3a"
+      c.font = "900 24px ui-rounded, 'PingFang SC', system-ui"
+      c.fillText("Lv." + Math.max(1, Math.min(99, Math.floor(score / 600) + 1)), 205, 140)
+      c.restore()
+
+      c.save()
+      roundRectOn(c, 650, 54, 270, 68, 34)
+      c.fillStyle = "#fff0a6"
+      c.fill()
+      c.strokeStyle = "#a97032"
+      c.lineWidth = 5
+      c.stroke()
+      c.fillStyle = "#ffb52e"
+      c.beginPath()
+      c.arc(696, 88, 28, 0, Math.PI * 2)
+      c.fill()
+      c.fillStyle = "#fff6ce"
+      c.font = "900 26px ui-rounded, system-ui"
+      c.textAlign = "center"
+      c.fillText("✦", 696, 97)
+      c.fillStyle = "#6f4527"
+      c.font = "900 34px ui-rounded, system-ui"
+      c.textAlign = "left"
+      c.fillText(String(score), 735, 101)
+      c.restore()
+
+      const sideIcons = ["⌂", "✦", "≡"]
+      for (let i = 0; i < sideIcons.length; i++) {
+        c.save()
+        c.shadowColor = "rgba(88,62,34,.23)"
+        c.shadowBlur = 14
+        roundRectOn(c, 930, 170 + i * 104, 90, 90, 22)
+        c.fillStyle = "#f4a236"
+        c.fill()
+        c.shadowBlur = 0
+        c.strokeStyle = "#fff6d8"
+        c.lineWidth = 5
+        c.stroke()
+        c.fillStyle = "#fff6d8"
+        c.font = "900 42px ui-rounded, system-ui"
+        c.textAlign = "center"
+        c.textBaseline = "middle"
+        c.fillText(sideIcons[i], 975, 215 + i * 104)
+        c.restore()
+      }
+
+      c.textAlign = "center"
+      c.fillStyle = "#643c25"
+      c.font = "900 82px ui-rounded, 'PingFang SC', system-ui"
+      c.fillText("隔空水果消消乐", w / 2, 285)
+      c.fillStyle = "#ff6a45"
+      c.font = "900 38px ui-rounded, 'PingFang SC', system-ui"
+      c.fillText("不用鼠标，手指在空气中连水果", w / 2, 340)
+
+      const roomX = 116
+      const roomY = 430
+      const roomW = 848
+      const roomH = 530
+      c.save()
+      c.shadowColor = "rgba(87,54,29,.24)"
+      c.shadowBlur = 24
+      c.fillStyle = "#c99358"
+      c.beginPath()
+      c.moveTo(roomX + roomW / 2, roomY)
+      c.lineTo(roomX + roomW, roomY + roomH * .25)
+      c.lineTo(roomX + roomW, roomY + roomH * .76)
+      c.lineTo(roomX + roomW / 2, roomY + roomH)
+      c.lineTo(roomX, roomY + roomH * .76)
+      c.lineTo(roomX, roomY + roomH * .25)
+      c.closePath()
+      c.fill()
+      c.shadowBlur = 0
+      c.strokeStyle = "#8f5f36"
+      c.lineWidth = 10
+      c.stroke()
+
+      c.fillStyle = "#ffe6bd"
+      c.beginPath()
+      c.moveTo(roomX + roomW / 2, roomY + 88)
+      c.lineTo(roomX + roomW - 94, roomY + roomH * .31)
+      c.lineTo(roomX + roomW - 94, roomY + roomH * .72)
+      c.lineTo(roomX + roomW / 2, roomY + roomH - 78)
+      c.lineTo(roomX + 94, roomY + roomH * .72)
+      c.lineTo(roomX + 94, roomY + roomH * .31)
+      c.closePath()
       c.fill()
 
-      c.fillStyle = "#181411"
-      c.textAlign = "center"
-      c.font = "900 84px ui-rounded, 'PingFang SC', system-ui"
-      c.fillText("隔空水果消消乐", w / 2, 170)
-      c.font = "700 36px ui-rounded, 'PingFang SC', system-ui"
-      c.fillStyle = "rgba(24,20,17,.62)"
-      c.fillText("我用手指隔空玩了一局水果消消乐", w / 2, 232)
+      c.strokeStyle = "rgba(155,98,50,.24)"
+      c.lineWidth = 4
+      for (let i = 0; i < 8; i++) {
+        c.beginPath()
+        c.moveTo(roomX + 130 + i * 80, roomY + 210)
+        c.lineTo(roomX + 248 + i * 44, roomY + roomH - 75)
+        c.stroke()
+      }
+
+      c.fillStyle = "#d99655"
+      roundRectOn(c, roomX + 146, roomY + 300, 208, 110, 24)
+      c.fill()
+      c.fillStyle = "#fff0cf"
+      roundRectOn(c, roomX + 160, roomY + 314, 180, 44, 18)
+      c.fill()
+      c.fillStyle = "#b87037"
+      roundRectOn(c, roomX + 600, roomY + 230, 128, 198, 58)
+      c.fill()
+      c.fillStyle = "#e0a14b"
+      roundRectOn(c, roomX + 622, roomY + 252, 84, 154, 38)
+      c.fill()
+      c.fillStyle = "#ffb23b"
+      c.beginPath()
+      c.ellipse(w / 2 + 205, roomY + 356, 126, 78, -.14, 0, Math.PI * 2)
+      c.fill()
+      c.fillStyle = "#ffd66a"
+      c.beginPath()
+      c.ellipse(w / 2 + 205, roomY + 356, 75, 44, -.14, 0, Math.PI * 2)
+      c.fill()
+      c.restore()
 
       const hero = bigFruits[0] || targetFruit || fruits[0]
-      drawFruitIcon(hero, 230, w / 2, 410, c)
+      drawFruitIcon(hero, 210, w / 2, 672, c)
+      drawFruitIcon(fruits[1], 92, 308, 604, c)
+      drawFruitIcon(fruits[2], 92, 758, 604, c)
+      drawFruitIcon(fruits[5], 82, 380, 846, c)
+      drawFruitIcon(fruits[4], 78, 698, 842, c)
 
-      c.fillStyle = "#ff6b4a"
-      c.font = "900 56px ui-rounded, 'PingFang SC', system-ui"
-      c.fillText(playerTitle(), w / 2, 610)
+      c.save()
+      c.fillStyle = "#fff7e6"
+      roundRectOn(c, 306, 888, 468, 82, 30)
+      c.fill()
+      c.strokeStyle = "#9b6837"
+      c.lineWidth = 5
+      c.stroke()
+      c.fillStyle = "#ff6548"
+      c.font = "900 44px ui-rounded, 'PingFang SC', system-ui"
+      c.fillText(playerTitle(), w / 2, 942)
+      c.restore()
 
       const stats = [
         ["总分", score],
@@ -1191,26 +1366,29 @@
       for (let i = 0; i < stats.length; i++) {
         const col = i % 2
         const row = Math.floor(i / 2)
-        const x = 120 + col * 440
-        const y = 735 + row * 185
-        c.fillStyle = "rgba(255,255,255,.68)"
-        roundRectOn(c, x, y, 360, 128, 24)
+        const x = 136 + col * 420
+        const y = 1022 + row * 130
+        c.fillStyle = "rgba(255,250,238,.88)"
+        roundRectOn(c, x, y, 370, 108, 22)
         c.fill()
-        c.fillStyle = "rgba(24,20,17,.58)"
-        c.font = "800 30px ui-rounded, 'PingFang SC', system-ui"
-        c.fillText(stats[i][0], x + 34, y + 44)
-        c.fillStyle = "#181411"
-        c.font = "900 54px ui-rounded, 'PingFang SC', system-ui"
-        c.fillText(String(stats[i][1]), x + 34, y + 104)
+        c.strokeStyle = "rgba(255,255,255,.9)"
+        c.lineWidth = 3
+        c.stroke()
+        c.fillStyle = "rgba(96,62,38,.64)"
+        c.font = "900 26px ui-rounded, 'PingFang SC', system-ui"
+        c.fillText(stats[i][0], x + 34, y + 38)
+        c.fillStyle = "#211814"
+        c.font = "900 48px ui-rounded, 'PingFang SC', system-ui"
+        c.fillText(String(stats[i][1]), x + 34, y + 86)
       }
 
       c.textAlign = "center"
-      c.fillStyle = "rgba(24,20,17,.7)"
-      c.font = "800 30px ui-rounded, 'PingFang SC', system-ui"
-      c.fillText("摄像头只在本地识别手势 · 无需上传", w / 2, 1260)
-      c.fillStyle = "#181411"
-      c.font = "900 38px ui-rounded, 'PingFang SC', system-ui"
-      c.fillText("来试试你的隔空连击", w / 2, 1324)
+      roundRectOn(c, 156, 1300, 768, 62, 31)
+      c.fillStyle = "rgba(255,255,255,.72)"
+      c.fill()
+      c.fillStyle = "#6d4329"
+      c.font = "900 26px ui-rounded, 'PingFang SC', system-ui"
+      c.fillText("atian-create.github.io/gesture-music-grid-demo/match.html", w / 2, 1340)
     }
 
     function roundRectOn(c, x, y, w, h, r) {
@@ -1301,10 +1479,38 @@
       statusEl.innerHTML = "<strong>试玩 30 秒</strong>。可以继续鼠标，也可以打开摄像头试试隔空手势。"
     }
 
+    function startGestureCoach() {
+      gestureCoachUntil = performance.now() + 30000
+      gestureCoachLastStep = -1
+      statusEl.innerHTML = "<strong>手势接管教学</strong>。接下来 30 秒跟着提示走：先调整距离，再捏合选中，最后松开爆开。"
+    }
+
+    function updateGestureCoach() {
+      if (!gestureCoachUntil || gameOver || tutorialActive) return
+      const left = gestureCoachUntil - performance.now()
+      if (left <= 0) {
+        gestureCoachUntil = 0
+        gestureCoachLastStep = -1
+        statusEl.innerHTML = "<strong>手势教学完成</strong>。手指碰在一起选中，松开就消除爆开。"
+        return
+      }
+      const elapsed = 30000 - left
+      const step = elapsed < 10000 ? 0 : (elapsed < 20000 ? 1 : 2)
+      if (step === gestureCoachLastStep) return
+      gestureCoachLastStep = step
+      const copy = [
+        "<strong>手势 1/3</strong>。手离摄像头约 40-70cm，整只手入镜，背景简单会更稳。",
+        "<strong>手势 2/3</strong>。食指对准水果，大拇指和食指碰在一起就是选中。",
+        "<strong>手势 3/3</strong>。捏住划过同类水果，横着、竖着、斜着都可以；手指放开就爆开。",
+      ]
+      statusEl.innerHTML = copy[step]
+    }
+
     function updateRound() {
       updateTutorial()
       if (tutorialActive) return
       if (!gameStartedAt || gameOver) return
+      updateGestureCoach()
       const elapsed = performance.now() - gameStartedAt
       const left = ROUND_MS - elapsed
       timeLeftEl.textContent = formatTime(left)
@@ -1488,8 +1694,8 @@
       const px = prev[keyX]
       const py = prev[keyY]
       const dist = Math.hypot(rawX - px, rawY - py)
-      if (dist < (pinching ? 2.2 : 4.4)) return { x: px, y: py }
-      const smooth = dist > 90 ? .1 : dist > 34 ? (pinching ? .18 : .3) : (pinching ? .42 : .64)
+      if (dist < (pinching ? 1.6 : 3.4)) return { x: px, y: py }
+      const smooth = dist > 90 ? .06 : dist > 34 ? (pinching ? .12 : .22) : (pinching ? .24 : .42)
       return {
         x: px * smooth + rawX * (1 - smooth),
         y: py * smooth + rawY * (1 - smooth),
@@ -1527,7 +1733,7 @@
           dy = (H - dh) / 2
         }
         if (stageMode) drawBackdrop()
-        ctx.globalAlpha = stageMode ? .16 : .4
+        ctx.globalAlpha = stageMode ? .28 : .48
         ctx.filter = "none"
         if (mirror) {
           ctx.translate(W, 0)
@@ -1537,7 +1743,7 @@
           ctx.drawImage(video, dx, dy, dw, dh)
         }
         ctx.globalAlpha = 1
-        ctx.fillStyle = stageMode ? "rgba(6,5,4,.7)" : "rgba(6,5,4,.48)"
+        ctx.fillStyle = stageMode ? "rgba(6,5,4,.54)" : "rgba(6,5,4,.38)"
         ctx.fillRect(0, 0, W, H)
         ctx.fillStyle = stageMode ? "rgba(255,209,102,.06)" : "rgba(255,209,102,.035)"
         ctx.fillRect(0, 0, W, H)
@@ -1554,9 +1760,12 @@
     function orchardPosition(index, total) {
       const r = boardRect()
       if (W < 860) {
+        const shelf = fruitShelfRect()
+        const usableW = shelf ? shelf.x - r.x - 28 : r.size
+        const x = r.x + Math.max(36, usableW * ((index + 1) / (total + 1)))
         return {
-          x: r.x + r.size * ((index + 1) / (total + 1)),
-          y: Math.min(H - 58, r.y + r.size + 72),
+          x,
+          y: Math.min(H - 210, r.y + r.size + 72),
         }
       }
       const leftCount = Math.ceil(total / 2)
@@ -1564,11 +1773,13 @@
       const sideIndex = Math.floor(index / 2)
       const sideTotal = isLeft ? leftCount : total - leftCount
       const top = Math.max(140, r.y + 92)
-      const bottom = Math.min(H - 72, r.y + r.size - 20)
+      const bottom = isLeft
+        ? Math.min(H - 72, r.y + r.size - 20)
+        : Math.min(H - 270, r.y + r.size - 210)
       const y = top + (bottom - top) * ((sideIndex + .5) / Math.max(1, sideTotal))
       const x = isLeft
         ? Math.max(58, r.x * .48)
-        : Math.min(W - 58, r.x + r.size + (W - r.x - r.size) * .52)
+        : Math.min(W - 260, r.x + r.size + (W - r.x - r.size) * .36)
       return { x, y }
     }
 
@@ -1802,10 +2013,10 @@
       ctx.save()
       ctx.lineCap = "round"
       ctx.lineJoin = "round"
-      ctx.lineWidth = 10
-      ctx.strokeStyle = selected.length >= 3 ? lineColor : "rgba(255,255,255,.48)"
-      ctx.shadowColor = selected.length >= 3 ? lineColor : "#fff"
-      ctx.shadowBlur = 18
+      ctx.lineWidth = 20
+      ctx.strokeStyle = "rgba(255,255,255,.46)"
+      ctx.shadowColor = lineColor
+      ctx.shadowBlur = 12
       ctx.beginPath()
       selected.forEach((tile, i) => {
         if (i === 0) ctx.moveTo(tile.x, tile.y)
@@ -1813,6 +2024,58 @@
       })
       if (selecting && pointer) ctx.lineTo(pointer.x, pointer.y)
       ctx.stroke()
+      ctx.lineWidth = selected.length >= 3 ? 12 : 8
+      ctx.strokeStyle = selected.length >= 3 ? lineColor : "rgba(255,255,255,.84)"
+      ctx.setLineDash(selected.length >= 3 ? [] : [10, 8])
+      ctx.lineDashOffset = -performance.now() * .03
+      ctx.beginPath()
+      selected.forEach((tile, i) => {
+        if (i === 0) ctx.moveTo(tile.x, tile.y)
+        else ctx.lineTo(tile.x, tile.y)
+      })
+      if (selecting && pointer) ctx.lineTo(pointer.x, pointer.y)
+      ctx.stroke()
+      ctx.setLineDash([])
+      ctx.restore()
+    }
+
+    function drawTutorialHintPath() {
+      if (!tutorialActive || tutorialStep !== "practice") return
+      const hints = tutorialPracticeHints()
+      if (hints.length < 3) return
+      const t = performance.now()
+      const pulse = .65 + Math.sin(t * .008) * .22
+      const color = hints[0].color || "#ffd21f"
+      ctx.save()
+      ctx.lineCap = "round"
+      ctx.lineJoin = "round"
+      ctx.strokeStyle = color
+      ctx.lineWidth = 12
+      ctx.shadowColor = color
+      ctx.shadowBlur = 28
+      ctx.globalAlpha = pulse
+      ctx.setLineDash([16, 12])
+      ctx.lineDashOffset = -t * .04
+      ctx.beginPath()
+      ctx.moveTo(hints[0].x, hints[0].y)
+      ctx.lineTo(hints[1].x, hints[1].y)
+      ctx.lineTo(hints[2].x, hints[2].y)
+      ctx.stroke()
+      ctx.setLineDash([])
+      for (let i = 0; i < hints.length; i++) {
+        ctx.fillStyle = "rgba(255,255,255,.9)"
+        ctx.beginPath()
+        ctx.arc(hints[i].x, hints[i].y, 7 + Math.sin(t * .009 + i) * 3, 0, Math.PI * 2)
+        ctx.fill()
+      }
+      const mid = hints[1]
+      ctx.globalAlpha = 1
+      ctx.fillStyle = "#fff"
+      ctx.font = "900 14px ui-rounded, 'PingFang SC', system-ui"
+      ctx.textAlign = "center"
+      ctx.shadowColor = "rgba(0,0,0,.65)"
+      ctx.shadowBlur = 8
+      ctx.fillText("斜着 3 个也能连", mid.x, mid.y - boardRect().cell * .62)
       ctx.restore()
     }
 
@@ -1820,11 +2083,11 @@
       if (!handPointer) return
       ctx.save()
       ctx.lineCap = "round"
-      ctx.setLineDash(handPointer.pinching ? [10, 8] : [5, 8])
+      ctx.setLineDash(handPointer.pinching ? [] : [6, 8])
       ctx.lineDashOffset = -performance.now() * .018
-      ctx.lineWidth = handPointer.pinching ? 5 : 3
-      ctx.strokeStyle = handPointer.pinching ? "rgba(255,209,102,.9)" : "rgba(255,255,255,.52)"
-      ctx.shadowColor = handPointer.pinching ? "#ffd166" : "#fff"
+      ctx.lineWidth = handPointer.pinching ? 6 : 4
+      ctx.strokeStyle = handPointer.pinching ? "rgba(255,210,31,.88)" : "rgba(255,255,255,.55)"
+      ctx.shadowColor = handPointer.pinching ? "#ffd21f" : "#fff"
       ctx.shadowBlur = handPointer.pinching ? 18 : 8
       ctx.beginPath()
       ctx.moveTo(handPointer.indexX, handPointer.indexY)
@@ -1833,21 +2096,20 @@
       ctx.setLineDash([])
       ctx.fillStyle = handPointer.pinching ? "#ffd166" : "rgba(255,255,255,.9)"
       ctx.beginPath()
-      ctx.arc(handPointer.indexX, handPointer.indexY, handPointer.pinching ? 7 : 5, 0, Math.PI * 2)
+      ctx.arc(handPointer.indexX, handPointer.indexY, handPointer.pinching ? 13 : 10, 0, Math.PI * 2)
       ctx.fill()
       ctx.fillStyle = handPointer.pinching ? "#ff9bb0" : "rgba(255,255,255,.62)"
       ctx.beginPath()
-      ctx.arc(handPointer.thumbX, handPointer.thumbY, handPointer.pinching ? 7 : 5, 0, Math.PI * 2)
+      ctx.arc(handPointer.thumbX, handPointer.thumbY, handPointer.pinching ? 13 : 10, 0, Math.PI * 2)
       ctx.fill()
+      ctx.fillStyle = "rgba(255,255,255,.94)"
+      ctx.font = "900 12px ui-rounded, 'PingFang SC', system-ui"
+      ctx.textAlign = "center"
+      ctx.shadowColor = "rgba(0,0,0,.55)"
+      ctx.shadowBlur = 8
+      ctx.fillText("食指", handPointer.indexX, handPointer.indexY - 22)
+      ctx.fillText("拇指", handPointer.thumbX, handPointer.thumbY + 24)
       ctx.restore()
-    }
-
-    function softFruitGradient(c, color, size) {
-      const g = c.createRadialGradient(-size * .16, -size * .18, size * .04, 0, size * .04, size * .48)
-      g.addColorStop(0, "rgba(255,255,255,.88)")
-      g.addColorStop(.18, color)
-      g.addColorStop(1, color)
-      return g
     }
 
     function drawFruitIcon(fruit, size, x = 0, y = 0, targetCtx = ctx) {
@@ -1856,105 +2118,203 @@
       const color = fruit.color || "#ffd166"
       c.save()
       c.translate(x, y)
+
+      const radial = (main, dark, light = "#fff") => {
+        const g = c.createRadialGradient(-size * .2, -size * .22, size * .04, 0, size * .06, size * .5)
+        g.addColorStop(0, light)
+        g.addColorStop(.18, main)
+        g.addColorStop(1, dark)
+        return g
+      }
+      const drawLeaf = (lx, ly, sx = 1, sy = .6, rot = -.5, fill = "#59c83f") => {
+        c.save()
+        c.translate(lx, ly)
+        c.rotate(rot)
+        c.fillStyle = radial(fill, "#238d2d", "#b6f06c")
+        c.strokeStyle = "rgba(34,103,35,.42)"
+        c.lineWidth = Math.max(1.4, size * .022)
+        c.beginPath()
+        c.ellipse(0, 0, size * .15 * sx, size * .09 * sy, 0, 0, Math.PI * 2)
+        c.fill()
+        c.stroke()
+        c.restore()
+      }
+      const drawStem = (x1, y1, x2, y2) => {
+        c.strokeStyle = "#a05d22"
+        c.lineWidth = size * .05
+        c.lineCap = "round"
+        c.beginPath()
+        c.moveTo(x1, y1)
+        c.quadraticCurveTo((x1 + x2) / 2 - size * .02, (y1 + y2) / 2, x2, y2)
+        c.stroke()
+      }
+      const gloss = (gx = -size * .15, gy = -size * .15, rx = .12, ry = .06) => {
+        c.fillStyle = "rgba(255,255,255,.52)"
+        c.beginPath()
+        c.ellipse(gx, gy, size * rx, size * ry, -.62, 0, Math.PI * 2)
+        c.fill()
+      }
+      const ball = (bx, by, r, main, dark, light) => {
+        c.fillStyle = radial(main, dark, light)
+        c.beginPath()
+        c.arc(bx, by, r, 0, Math.PI * 2)
+        c.fill()
+      }
+
       c.lineCap = "round"
       c.lineJoin = "round"
-      c.shadowColor = color
-      c.shadowBlur = size * .16
+      c.shadowColor = "rgba(67,38,18,.22)"
+      c.shadowBlur = size * .08
+      c.shadowOffsetY = size * .05
+
       if (id === "rainbow") {
+        c.shadowBlur = size * .05
         for (let i = 0; i < 5; i++) {
-          c.strokeStyle = ["#ff4d6d", "#ffd166", "#53b97f", "#3aa7b7", "#a78bfa"][i]
-          c.lineWidth = size * .08
+          c.strokeStyle = ["#ff4d6d", "#ffd93d", "#56d66b", "#37b7ff", "#a678ff"][i]
+          c.lineWidth = size * .085
           c.beginPath()
-          c.arc(0, size * .18, size * (.46 - i * .07), Math.PI, Math.PI * 2)
+          c.arc(0, size * .2, size * (.42 - i * .07), Math.PI, Math.PI * 2)
           c.stroke()
         }
       } else if (id === "bomb") {
-        c.fillStyle = "#2b2523"
+        ball(0, size * .06, size * .34, "#383331", "#171513", "#77716d")
+        c.strokeStyle = "#ff5544"
+        c.lineWidth = size * .07
         c.beginPath()
-        c.arc(0, size * .06, size * .34, 0, Math.PI * 2)
-        c.fill()
-        c.strokeStyle = "#ff4d6d"
-        c.lineWidth = size * .08
-        c.beginPath()
-        c.moveTo(size * .1, -size * .28)
-        c.quadraticCurveTo(size * .26, -size * .5, size * .42, -size * .38)
+        c.moveTo(size * .11, -size * .25)
+        c.quadraticCurveTo(size * .28, -size * .5, size * .44, -size * .36)
         c.stroke()
-        c.fillStyle = "#ffd166"
+        ball(size * .47, -size * .38, size * .085, "#ffe45c", "#ff8f1f", "#fff5ad")
+      } else if (id === "apple") {
+        c.fillStyle = radial("#ff3b2f", "#c91f23", "#ffd5bb")
         c.beginPath()
-        c.arc(size * .45, -size * .4, size * .08, 0, Math.PI * 2)
+        c.moveTo(0, -size * .32)
+        c.bezierCurveTo(size * .38, -size * .42, size * .47, -size * .02, size * .32, size * .3)
+        c.bezierCurveTo(size * .16, size * .55, -size * .17, size * .55, -size * .33, size * .3)
+        c.bezierCurveTo(-size * .47, -size * .02, -size * .38, -size * .42, 0, -size * .32)
         c.fill()
+        c.strokeStyle = "rgba(142,33,25,.28)"
+        c.lineWidth = size * .035
+        c.stroke()
+        drawStem(-size * .02, -size * .34, size * .02, -size * .52)
+        drawLeaf(size * .17, -size * .43, 1, .9, -.45)
+        gloss(-size * .15, -size * .15, .12, .075)
+      } else if (id === "kiwi") {
+        ball(size * .14, -size * .02, size * .32, "#c4842e", "#87531e", "#e6a04c")
+        c.fillStyle = radial("#8df243", "#54b72f", "#f0ffd2")
+        c.beginPath()
+        c.arc(-size * .07, size * .03, size * .32, 0, Math.PI * 2)
+        c.fill()
+        c.strokeStyle = "#7ec43c"
+        c.lineWidth = size * .025
+        c.stroke()
+        ball(-size * .07, size * .03, size * .1, "#f5ffd8", "#d5f58a", "#fff")
+        c.fillStyle = "#22351b"
+        for (let i = 0; i < 18; i++) {
+          const a = i / 18 * Math.PI * 2
+          c.beginPath()
+          c.ellipse(-size * .07 + Math.cos(a) * size * .2, size * .03 + Math.sin(a) * size * .2, size * .012, size * .02, a, 0, Math.PI * 2)
+          c.fill()
+        }
       } else if (id === "banana") {
-        c.fillStyle = softFruitGradient(c, color, size)
-        c.strokeStyle = "#f2ba3d"
-        c.lineWidth = size * .06
-        c.beginPath()
-        c.moveTo(-size * .36, -size * .15)
-        c.quadraticCurveTo(-size * .05, size * .45, size * .42, size * .1)
-        c.quadraticCurveTo(size * .05, size * .28, -size * .25, -size * .25)
-        c.closePath()
-        c.fill()
-        c.stroke()
+        const drawBanana = (ox, oy, rot, scale = 1) => {
+          c.save()
+          c.translate(ox, oy)
+          c.rotate(rot)
+          c.scale(scale, scale)
+          c.fillStyle = radial("#ffe44d", "#f7ad12", "#fff7a8")
+          c.strokeStyle = "rgba(182,112,11,.28)"
+          c.lineWidth = size * .03
+          c.beginPath()
+          c.moveTo(-size * .36, -size * .1)
+          c.bezierCurveTo(-size * .13, size * .35, size * .26, size * .42, size * .42, size * .03)
+          c.bezierCurveTo(size * .14, size * .18, -size * .16, size * .08, -size * .27, -size * .2)
+          c.closePath()
+          c.fill()
+          c.stroke()
+          c.fillStyle = "#b76b16"
+          c.beginPath()
+          c.arc(-size * .34, -size * .1, size * .035, 0, Math.PI * 2)
+          c.arc(size * .42, size * .03, size * .035, 0, Math.PI * 2)
+          c.fill()
+          c.restore()
+        }
+        drawBanana(-size * .06, size * .05, -.12, .95)
+        drawBanana(size * .06, -size * .02, -.02, .98)
+        drawBanana(size * .14, size * .08, .1, .9)
       } else if (id === "grape") {
-        c.fillStyle = softFruitGradient(c, color, size)
-        for (let row = 0; row < 3; row++) {
-          for (let col = 0; col < 3 - row; col++) {
-            c.beginPath()
-            c.arc((col - (2 - row) / 2) * size * .18, -size * .14 + row * size * .18, size * .12, 0, Math.PI * 2)
-            c.fill()
-          }
+        drawStem(-size * .2, -size * .36, -size * .04, -size * .5)
+        drawLeaf(size * .02, -size * .46, 1.2, .9, .18, "#73d33e")
+        const pts = [[-.22,-.22],[0,-.25],[.2,-.2],[-.28,0],[-.06,.02],[.16,.02],[-.2,.22],[.04,.24]]
+        for (const [px, py] of pts) {
+          ball(size * px, size * py, size * .14, "#b8ef3b", "#75bd22", "#edff97")
         }
       } else if (id === "berry") {
-        c.fillStyle = softFruitGradient(c, color, size)
+        ball(0, size * .04, size * .36, "#3f8ee9", "#1e5aa9", "#a7d7ff")
+        c.fillStyle = "#254366"
         c.beginPath()
-        c.arc(-size * .1, size * .03, size * .25, 0, Math.PI * 2)
-        c.arc(size * .16, size * .02, size * .22, 0, Math.PI * 2)
-        c.fill()
-        c.fillStyle = "rgba(255,255,255,.36)"
-        c.beginPath()
-        c.arc(-size * .2, -size * .08, size * .06, 0, Math.PI * 2)
-        c.fill()
-      } else {
-        c.fillStyle = softFruitGradient(c, color, size)
-        c.beginPath()
-        if (id === "lemon" || id === "kiwi") {
-          c.ellipse(0, size * .02, size * .36, size * .28, id === "lemon" ? -.35 : 0, 0, Math.PI * 2)
-        } else if (id === "cherry") {
-          c.arc(-size * .13, size * .08, size * .22, 0, Math.PI * 2)
-          c.arc(size * .18, size * .08, size * .2, 0, Math.PI * 2)
-        } else if (id === "peach") {
-          c.moveTo(0, -size * .35)
-          c.bezierCurveTo(size * .38, -size * .28, size * .42, size * .25, 0, size * .4)
-          c.bezierCurveTo(-size * .42, size * .25, -size * .38, -size * .28, 0, -size * .35)
-        } else {
-          c.arc(0, size * .04, size * .34, 0, Math.PI * 2)
+        for (let i = 0; i < 6; i++) {
+          const a = i / 6 * Math.PI * 2
+          const rr = i % 2 ? size * .085 : size * .15
+          const px = size * .08 + Math.cos(a) * rr
+          const py = -size * .16 + Math.sin(a) * rr
+          if (i === 0) c.moveTo(px, py)
+          else c.lineTo(px, py)
         }
+        c.closePath()
         c.fill()
-        if (id === "kiwi") {
-          c.fillStyle = "#d8f3a4"
-          c.beginPath()
-          c.arc(0, size * .02, size * .2, 0, Math.PI * 2)
-          c.fill()
-          c.fillStyle = "#253d2b"
-          for (let i = 0; i < 8; i++) {
-            const a = i / 8 * Math.PI * 2
-            c.beginPath()
-            c.arc(Math.cos(a) * size * .14, size * .02 + Math.sin(a) * size * .14, size * .018, 0, Math.PI * 2)
-            c.fill()
-          }
-        }
-      }
-      c.shadowBlur = 0
-      c.strokeStyle = "#2f6f43"
-      c.lineWidth = size * .05
-      if (!["banana", "grape", "berry", "rainbow", "bomb", "kiwi"].includes(id)) {
+        gloss(-size * .14, -size * .1, .09, .055)
+      } else if (id === "lemon") {
+        c.fillStyle = radial("#ffe841", "#f4a51e", "#fff7aa")
         c.beginPath()
-        c.moveTo(size * .02, -size * .3)
-        c.quadraticCurveTo(size * .1, -size * .47, size * .26, -size * .38)
+        c.ellipse(0, size * .03, size * .37, size * .43, .05, 0, Math.PI * 2)
+        c.fill()
+        c.strokeStyle = "rgba(182,123,15,.22)"
+        c.lineWidth = size * .028
         c.stroke()
-        c.fillStyle = "#53b97f"
+        drawStem(-size * .03, -size * .35, size * .02, -size * .48)
+        drawLeaf(size * .2, -size * .38, 1.1, .9, -.25, "#62cf3e")
+        gloss(-size * .14, -size * .16, .12, .07)
+      } else if (id === "orange") {
+        ball(size * .08, 0, size * .36, "#ffad19", "#ed6f00", "#fff08a")
+        drawLeaf(size * .16, -size * .35, 1.2, .8, -.25, "#60c83c")
+        c.save()
+        c.rotate(.18)
+        c.fillStyle = "#ffbd25"
         c.beginPath()
-        c.ellipse(size * .24, -size * .36, size * .13, size * .07, -.35, 0, Math.PI * 2)
+        c.arc(-size * .18, size * .16, size * .25, -.15, Math.PI * 1.2)
+        c.lineTo(-size * .18, size * .16)
+        c.closePath()
         c.fill()
+        c.strokeStyle = "rgba(255,255,255,.72)"
+        c.lineWidth = size * .028
+        c.stroke()
+        for (let i = 0; i < 4; i++) {
+          c.beginPath()
+          c.moveTo(-size * .18, size * .16)
+          c.lineTo(-size * .18 + Math.cos(i * .6 + 1) * size * .24, size * .16 + Math.sin(i * .6 + 1) * size * .24)
+          c.stroke()
+        }
+        c.restore()
+      } else if (id === "peach") {
+        const pts = [[-.18,-.08],[.03,-.13],[.24,-.06],[-.25,.12],[-.03,.09],[.2,.14],[-.12,.3],[.1,.32]]
+        for (const [px, py] of pts) ball(size * px, size * py, size * .15, "#ff5a45", "#d92725", "#ffb47d")
+        c.fillStyle = "#ff764f"
+        c.beginPath()
+        c.arc(0, size * .12, size * .18, 0, Math.PI * 2)
+        c.fill()
+        drawLeaf(size * .12, -size * .34, .95, .8, -.2, "#56c53e")
+        drawLeaf(-size * .05, -size * .36, .85, .8, .25, "#4fbb38")
+      } else if (id === "cherry") {
+        drawStem(-size * .13, -size * .04, -size * .04, -size * .44)
+        drawStem(size * .14, -size * .06, -size * .04, -size * .44)
+        ball(-size * .16, size * .16, size * .23, "#ff3e32", "#c7191e", "#ffb38c")
+        ball(size * .17, size * .14, size * .22, "#ef211f", "#aa1017", "#ff9b7c")
+        drawLeaf(size * .13, -size * .42, 1.05, .85, -.35)
+        gloss(-size * .24, size * .04, .06, .035)
+      } else {
+        ball(0, size * .03, size * .36, color, color, "#fff")
+        gloss()
       }
       c.restore()
     }
@@ -1974,9 +2334,24 @@
       ctx.save()
       ctx.translate(tile.x, tile.y)
       ctx.scale(tile.scale, tile.scale)
+      if (isSelected) {
+        ctx.save()
+        ctx.shadowColor = tile.color
+        ctx.shadowBlur = 26
+        roundRect(-cell.size * .43, -cell.size * .43, cell.size * .86, cell.size * .86, 14)
+        ctx.fillStyle = "rgba(255,255,255,.24)"
+        ctx.fill()
+        ctx.strokeStyle = tile.color
+        ctx.lineWidth = 5
+        ctx.stroke()
+        ctx.strokeStyle = "rgba(255,255,255,.9)"
+        ctx.lineWidth = 2
+        ctx.stroke()
+        ctx.restore()
+      }
       ctx.shadowColor = tile.color
-      ctx.shadowBlur = tile.special || isHover || isArmedBomb || isTutorialHint ? 24 : (isSelected ? 28 : 12)
-      ctx.fillStyle = isSelected || isHover || isTutorialHint ? "rgba(255,255,255,.2)" : "rgba(255,255,255,.12)"
+      ctx.shadowBlur = tile.special || isHover || isArmedBomb || isTutorialHint ? 9 : (isSelected ? 12 : 2)
+      ctx.fillStyle = isSelected || isHover || isTutorialHint ? "rgba(255,255,255,.18)" : "rgba(255,255,255,.04)"
       ctx.beginPath()
       ctx.arc(0, 0, r + 10, 0, Math.PI * 2)
       ctx.fill()
@@ -2013,12 +2388,12 @@
         ctx.setLineDash([])
       }
       ctx.fillStyle = tile.color
-      ctx.globalAlpha = isSelected ? .3 : .18
+      ctx.globalAlpha = isSelected ? .18 : .04
       ctx.beginPath()
       ctx.arc(0, 0, r + 2, 0, Math.PI * 2)
       ctx.fill()
       ctx.globalAlpha = 1
-      drawFruitIcon(tile, r * 1.55, 0, 0)
+      drawFruitIcon(tile, r * 1.7, 0, 0)
       ctx.restore()
     }
 
@@ -2123,7 +2498,7 @@
         ctx.fillStyle = "rgba(255,255,255,.9)"
         ctx.shadowColor = "rgba(0,0,0,.55)"
         ctx.shadowBlur = 8
-        ctx.fillText(hoverTile.special === "bomb" ? "双击引爆 9 宫格" : "捏住确认", p.x, p.y - 30)
+        ctx.fillText(hoverTile.special === "bomb" ? "双击引爆 9 宫格" : "碰指选中，松开爆开", p.x, p.y - 30)
       }
       ctx.fillStyle = p.pinching ? "#ffd166" : "rgba(255,255,255,.86)"
       ctx.beginPath()
@@ -2136,9 +2511,9 @@
       if (!tutorialActive || gameOver) return
       const r = boardRect()
       const messages = {
-        aim: inputMode === "camera" ? "伸出食指，对准屏幕上的光点" : "移动鼠标，对准屏幕上的光点",
-        pinch: inputMode === "camera" ? "食指和大拇指捏合一下" : "按住鼠标，准备拖动",
-        practice: inputMode === "camera" ? "捏住滑过高亮水果，斜着也能连" : "按住鼠标拖过高亮水果，斜着也能连",
+        aim: inputMode === "camera" ? "伸出食指，让黄色“食指”点对准光点" : "移动鼠标，对准屏幕上的光点",
+        pinch: inputMode === "camera" ? "食指和大拇指碰在一起，就是选中" : "按住鼠标，准备拖动",
+        practice: inputMode === "camera" ? "捏住滑过高亮水果，斜着 3 个也能连" : "按住鼠标拖过高亮水果，斜着 3 个也能连",
       }
       ctx.save()
       const boxW = Math.min(520, W - 28)
@@ -2172,6 +2547,105 @@
         ctx.arc(x, y, 9 * pulse, 0, Math.PI * 2)
         ctx.fill()
       }
+      if (tutorialStep === "pinch" && inputMode === "camera") {
+        const x = W / 2
+        const y = Math.min(H - 88, r.y + r.size * .75)
+        ctx.strokeStyle = "#ffd21f"
+        ctx.lineWidth = 6
+        ctx.shadowColor = "#ffd21f"
+        ctx.shadowBlur = 18
+        ctx.beginPath()
+        ctx.arc(x - 34, y, 19, 0, Math.PI * 2)
+        ctx.stroke()
+        ctx.beginPath()
+        ctx.arc(x + 34, y, 19, 0, Math.PI * 2)
+        ctx.stroke()
+        ctx.beginPath()
+        ctx.moveTo(x - 14, y)
+        ctx.lineTo(x + 14, y)
+        ctx.stroke()
+        ctx.shadowBlur = 0
+        ctx.fillStyle = "#fff"
+        ctx.font = "900 13px ui-rounded, 'PingFang SC', system-ui"
+        ctx.fillText("食指 + 大拇指碰在一起", x, y + 42)
+      }
+      ctx.restore()
+    }
+
+    function drawGestureCoachOverlay() {
+      if (!gestureCoachUntil || tutorialActive || gameOver) return
+      const left = gestureCoachUntil - performance.now()
+      if (left <= 0) return
+      const step = left > 20000 ? 0 : (left > 10000 ? 1 : 2)
+      const messages = [
+        ["调整距离", "40-70cm，整只手入镜"],
+        ["碰指选中", "食指瞄准，拇指碰食指"],
+        ["松开爆开", "捏住划过，松开爆开"],
+      ]
+      const r = boardRect()
+      const boxW = Math.min(720, W - 28)
+      const boxX = (W - boxW) / 2
+      const boxY = Math.max(W < 680 ? 96 : 74, r.y - 76)
+      const boxH = W < 680 ? 132 : 118
+      ctx.save()
+      roundRect(boxX, boxY, boxW, boxH, 14)
+      ctx.fillStyle = "rgba(24,20,17,.86)"
+      ctx.shadowColor = "rgba(0,0,0,.3)"
+      ctx.shadowBlur = 26
+      ctx.fill()
+      ctx.strokeStyle = "rgba(255,255,255,.24)"
+      ctx.lineWidth = 2
+      ctx.stroke()
+      ctx.shadowBlur = 0
+      ctx.fillStyle = "#fff7ea"
+      ctx.font = `900 ${W < 680 ? 15 : 20}px ui-rounded, 'PingFang SC', system-ui`
+      ctx.textAlign = "center"
+      ctx.textBaseline = "middle"
+      ctx.fillText("30 秒手势教学", W / 2, boxY + 24)
+      const cardGap = 8
+      const cardW = (boxW - 36 - cardGap * 2) / 3
+      for (let i = 0; i < 3; i++) {
+        const x = boxX + 18 + i * (cardW + cardGap)
+        const y = boxY + 46
+        roundRect(x, y, cardW, W < 680 ? 58 : 50, 10)
+        ctx.fillStyle = i === step ? "rgba(255,210,31,.96)" : "rgba(255,255,255,.12)"
+        ctx.fill()
+        ctx.fillStyle = i === step ? "#181411" : "rgba(255,255,255,.9)"
+        ctx.font = `900 ${W < 680 ? 12 : 14}px ui-rounded, 'PingFang SC', system-ui`
+        ctx.fillText(`${i + 1}. ${messages[i][0]}`, x + cardW / 2, y + 18)
+        ctx.font = `800 ${W < 680 ? 9 : 11}px ui-rounded, 'PingFang SC', system-ui`
+        ctx.fillText(messages[i][1], x + cardW / 2, y + (W < 680 ? 40 : 36))
+      }
+      const barW = boxW - 44
+      roundRect(boxX + 22, boxY + boxH - 16, barW, 6, 3)
+      ctx.fillStyle = "rgba(255,255,255,.2)"
+      ctx.fill()
+      roundRect(boxX + 22, boxY + boxH - 16, barW * (1 - left / 30000), 6, 3)
+      ctx.fillStyle = "#ffd76a"
+      ctx.fill()
+
+      if (!handPointer) {
+        const x = W / 2
+        const y = Math.min(H - 96, r.y + r.size * .72)
+        ctx.strokeStyle = "rgba(255,210,31,.9)"
+        ctx.lineWidth = 5
+        ctx.shadowColor = "#ffd21f"
+        ctx.shadowBlur = 20
+        ctx.beginPath()
+        ctx.arc(x - 32, y, 18, 0, Math.PI * 2)
+        ctx.stroke()
+        ctx.beginPath()
+        ctx.arc(x + 32, y, 18, 0, Math.PI * 2)
+        ctx.stroke()
+        ctx.beginPath()
+        ctx.moveTo(x - 14, y)
+        ctx.lineTo(x + 14, y)
+        ctx.stroke()
+        ctx.shadowBlur = 0
+        ctx.fillStyle = "rgba(255,255,255,.92)"
+        ctx.font = "900 13px ui-rounded, 'PingFang SC', system-ui"
+        ctx.fillText("让食指和大拇指在画面里清楚分开 / 碰合", x, y + 42)
+      }
       ctx.restore()
     }
 
@@ -2180,8 +2654,12 @@
       pointer = inputMode === "camera" ? (handPointer || mousePointer) : (mousePointer || handPointer)
       if (!pointer) {
         hoverTile = null
+        lastPointerSample = null
         endSelection()
         return
+      }
+      if (pointer.pinching && selecting && lastPointerSample) {
+        extendSelectionAlongPath(lastPointerSample, pointer)
       }
       let tile = tileAt(pointer.x, pointer.y)
       if (pointer.justPinched && lastBombTap && performance.now() - lastBombTapAt < 1100) {
@@ -2210,6 +2688,7 @@
         endSelection()
       }
       if (pointer.justPinched) pointer.justPinched = false
+      lastPointerSample = pointer ? { x: pointer.x, y: pointer.y, pinching: pointer.pinching } : null
     }
 
     function loop(now) {
@@ -2229,6 +2708,7 @@
       drawBoard()
       drawGoalStrip()
       drawSelectionLine()
+      drawTutorialHintPath()
       for (let row = 0; row < gridRows; row++) {
         for (let col = 0; col < gridCols; col++) {
           const tile = board[row]?.[col]
@@ -2240,6 +2720,7 @@
       drawFingerGuide()
       drawPointer()
       drawTutorialOverlay()
+      drawGestureCoachOverlay()
       ctx.restore()
       drawAtianPopup("text")
       requestAnimationFrame(loop)
@@ -2288,7 +2769,7 @@
           else if (handDistanceState !== "good" && performance.now() - lastGestureTipAt > 1800) showGestureTip("good")
           const dist = Math.hypot(thumb.x - index.x, thumb.y - index.y)
           const was = handPointer && handPointer.pinching
-          const pinching = was ? dist < .082 : dist < .052
+          const pinching = was ? dist < .068 : dist < .04
           const rawIndexX = (mirror ? 1 - index.x : index.x) * W
           const rawIndexY = index.y * H
           const rawThumbX = (mirror ? 1 - thumb.x : thumb.x) * W
@@ -2363,6 +2844,7 @@
       await startCamera()
       if (cameraOk) {
         startHands()
+        startGestureCoach()
       } else {
         inputMode = "mouse"
         statusEl.innerHTML = "<strong>摄像头未开启</strong>。没关系，继续用鼠标/触摸也能完整玩。"
@@ -2382,6 +2864,7 @@
       canvas.setPointerCapture(pointerId)
       mousePointer = pos(e, true)
       mousePointer.justPinched = true
+      lastPointerSample = { x: mousePointer.x, y: mousePointer.y, pinching: true }
       ensureAudio()
     })
 

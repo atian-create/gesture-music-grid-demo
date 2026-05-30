@@ -2630,7 +2630,7 @@
       ctx.save()
       const boxW = Math.min(W < 680 ? 260 : 310, W - 24)
       const boxX = W < 680 ? W - boxW - 8 : Math.min(W - boxW - 14, r.x + r.size + 18)
-      const boxY = W < 680 ? 90 : 118
+      const boxY = W < 680 ? 150 : 118
       roundRect(boxX, boxY, boxW, 58, 10)
       ctx.fillStyle = "rgba(255,247,234,.88)"
       ctx.shadowColor = "rgba(0,0,0,.32)"
@@ -2703,7 +2703,7 @@
       const r = boardRect()
       const boxW = Math.min(W < 680 ? 260 : 310, W - 24)
       const boxX = W < 680 ? W - boxW - 8 : Math.min(W - boxW - 14, r.x + r.size + 18)
-      const boxY = W < 680 ? 90 : 182
+      const boxY = W < 680 ? 150 : 182
       const boxH = W < 680 ? 162 : 176
       ctx.save()
       roundRect(boxX, boxY, boxW, boxH, 14)
